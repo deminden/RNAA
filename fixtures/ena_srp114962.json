@@ -1,0 +1,40 @@
+[
+  {
+    "run_accession": "SRR7750979",
+    "study_accession": "PRJNA396019",
+    "secondary_study_accession": "SRP114962",
+    "experiment_accession": "SRX4607277",
+    "sample_accession": "SAMN09909193",
+    "secondary_sample_accession": "SRS3711734",
+    "library_layout": "PAIRED",
+    "instrument_platform": "ILLUMINA",
+    "instrument_model": "Illumina HiSeq 2500",
+    "fastq_ftp": "ftp.sra.ebi.ac.uk/vol1/fastq/SRR775/009/SRR7750979/SRR7750979_1.fastq.gz;ftp.sra.ebi.ac.uk/vol1/fastq/SRR775/009/SRR7750979/SRR7750979_2.fastq.gz",
+    "fastq_md5": "11111111111111111111111111111111;22222222222222222222222222222222",
+    "fastq_bytes": "100;200",
+    "submitted_ftp": "",
+    "submitted_md5": "",
+    "submitted_bytes": "",
+    "library_source": "TRANSCRIPTOMIC",
+    "library_strategy": "RNA-Seq"
+  },
+  {
+    "run_accession": "SRR7750980",
+    "study_accession": "PRJNA396019",
+    "secondary_study_accession": "SRP114962",
+    "experiment_accession": "SRX4607276",
+    "sample_accession": "SAMN09909196",
+    "secondary_sample_accession": "SRS3711732",
+    "library_layout": "PAIRED",
+    "instrument_platform": "ILLUMINA",
+    "instrument_model": "Illumina HiSeq 2500",
+    "fastq_ftp": "ftp.sra.ebi.ac.uk/vol1/fastq/SRR775/000/SRR7750980/SRR7750980_1.fastq.gz;ftp.sra.ebi.ac.uk/vol1/fastq/SRR775/000/SRR7750980/SRR7750980_2.fastq.gz",
+    "fastq_md5": "33333333333333333333333333333333;44444444444444444444444444444444",
+    "fastq_bytes": "300;400",
+    "submitted_ftp": "",
+    "submitted_md5": "",
+    "submitted_bytes": "",
+    "library_source": "TRANSCRIPTOMIC",
+    "library_strategy": "RNA-Seq"
+  }
+]

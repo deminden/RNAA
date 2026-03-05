@@ -1,0 +1,16 @@
+[Unit]
+Description=RNAA download worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rnaa
+Group=rnaa
+WorkingDirectory=/srv/rnaa
+ExecStart=/srv/rnaa/bin/rnaa download --root /srv/rnaa/projects/public-cohort --forever --concurrency 2
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

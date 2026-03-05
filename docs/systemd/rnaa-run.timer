@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic RNAA orchestration
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Unit=rnaa-run.service
+
+[Install]
+WantedBy=timers.target

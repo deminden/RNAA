@@ -1,0 +1,56 @@
+[project]
+name = "public-cohort"
+schema_version = 1
+
+[resolver]
+provider = "ena"
+fields = [
+  "run_accession",
+  "study_accession",
+  "secondary_study_accession",
+  "sample_accession",
+  "secondary_sample_accession",
+  "experiment_accession",
+  "library_layout",
+  "instrument_platform",
+  "instrument_model",
+  "fastq_ftp",
+  "fastq_md5",
+  "fastq_bytes",
+  "submitted_ftp",
+  "submitted_md5",
+  "submitted_bytes",
+]
+merge_strategy = "prefer_local"
+
+[download]
+concurrency = 2
+retries = 6
+backoff_seconds = [1, 2, 4, 8, 16, 32]
+prefer = "fastq"
+method = "curl"
+
+[refs]
+organism = "human"
+ensembl = "latest"
+custom_gtf = ""
+custom_cdna = ""
+
+[quant]
+engine = "r-kallisto"
+threads = 16
+cleanup = "none"
+trash_days = 7
+cleanup_on = "success"
+
+[deseq2]
+design = "~ batch + condition"
+counts_from_abundance = "lengthScaledTPM"
+transform = "vst"
+
+[corr]
+adjust = "residualize"
+model = "~ batch + condition"
+method = "pearson"
+geneset = "topvar:5000"
+output = "edges:topk=50"

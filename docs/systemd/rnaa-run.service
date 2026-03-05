@@ -1,0 +1,11 @@
+[Unit]
+Description=RNAA orchestration run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rnaa
+Group=rnaa
+WorkingDirectory=/srv/rnaa
+ExecStart=/srv/rnaa/bin/rnaa run --root /srv/rnaa/projects/public-cohort --no-download

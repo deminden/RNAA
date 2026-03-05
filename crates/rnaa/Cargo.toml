@@ -1,0 +1,21 @@
+[package]
+name = "rnaa"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+csv.workspace = true
+regex.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+which.workspace = true
+
+rnaa-core = { path = "../rnaa-core" }
+rnaa-stages = { path = "../rnaa-stages" }
+rnaa-formats = { path = "../rnaa-formats" }

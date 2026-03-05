@@ -1,0 +1,31 @@
+[package]
+name = "rnaa-stages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+csv.workspace = true
+flate2.workspace = true
+md-5.workspace = true
+mincorr.workspace = true
+nalgebra.workspace = true
+ndarray.workspace = true
+num_cpus.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tracing.workspace = true
+url.workspace = true
+walkdir.workspace = true
+
+rnaa-core = { path = "../rnaa-core" }
+rnaa-formats = { path = "../rnaa-formats" }
+
+[dev-dependencies]
+tempfile.workspace = true
