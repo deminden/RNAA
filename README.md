@@ -41,6 +41,7 @@ Optional:
 ## Quickstart
 
 ```bash
+git clone https://github.com/deminden/RNAA
 cargo build --release
 
 ./target/release/rnaa init --root /data/my-rnaa-project
@@ -75,8 +76,6 @@ The example keeps download concurrency intentionally small by default. Download 
 - `fixtures/`: offline test fixtures
 - `docs/systemd/`: example Linux services
 
-## Development
-
 
 ## Contributing
 
@@ -97,4 +96,4 @@ cargo test --workspace --all-features
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT license.
