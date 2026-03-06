@@ -6,53 +6,34 @@ RNAA is an RNA-seq survey pipeline for public cohorts. It resolves ENA accession
 
 ## Version
 
-Current workspace version: `0.2.0`.
+Current workspace version: `0.2.1`.
 
-## Recent Changes (Since Last Commit)
-
-- Added sample-scoped cohort composition in `rnaa add`:
-  - `--sample`
-  - `--include-sample`
-  - `--exclude-sample`
-- Added metadata predicate selectors in `rnaa add`:
-  - `--where field=value`
-  - `--exclude-where field!=value`
-- Added optional in-process preprocessing with `fasterp` (Rust integration, not CLI shell-out), with strict/bypass modes and reports.
-- Switched quant canonical payload to `abundance.h5` (HDF5-first) and updated DESeq2 input flow accordingly.
-- Added shared artifact linkage fields and shared-blob tables in SQLite to support cross-project payload reuse foundations.
-- Added shared storage config support via `[storage].shared_root` and `RNAA_SHARED_ROOT`.
-
-## Status
-
-Implemented now:
+## Capabilities
 
 - project init, add, resolve, status, doctor
-- ENA resolution for run/study/project/sample accessions
+- ENA resolution for run, study, project, and sample accessions
 - sample include/exclude selectors and metadata include/exclude predicates
 - restart-safe download worker with verification and manifests
-- reference preparation with cached GENCODE preset/custom bundles
-  default human and mouse presets use the matching GENCODE `transcripts.fa.gz` plus `annotation.gtf.gz`
-  reference caches are provider/versioned so stale reference layouts are not silently reused
-- optional in-process `fasterp` preprocessing before quant
-- quantification through `Rscript` plus kallisto (HDF5 canonical output)
+- cached GENCODE preset references for human and mouse
+  default presets use matching `transcripts.fa.gz` plus `annotation.gtf.gz`
+- optional in-process `fasterp` preprocessing before quantification
+- quantification through `Rscript` plus kallisto
 - restart-safe quant reconciliation from existing artifacts and matching reference manifests
-- normalization-only stage via `rnaa normalize` (counts, normalized counts, VST)
+- normalization-only stage via `rnaa normalize`
 - DESeq2 through `Rscript` plus tximport/DESeq2
-  transcript/gene IDs are normalized across quant and tx2gene inputs, and annotated outputs are written alongside raw ENSG outputs
 - adjusted correlation through Rust residualization plus `mincorr`
 - restart-safe DE/corr reconciliation from request manifests and existing outputs
 - optional module-level enrichment from Spearman modules via Rust `rsfgsea`
 - orchestration via `rnaa run` with download plus quant overlap
-- quant run-level parallelism (`[quant].workers` or `rnaa quant --workers`)
-- operator-facing run/status summaries with stage-aware project progress
+- quant run-level parallelism via `[quant].workers` or `rnaa quant --workers`
 
-Still incomplete:
+## Limitations
 
-- `export` and `survey` are stubs
+- `export` and `survey` are still stubs
 - cleanup policy flags exist, but full trash/purge execution is not finished
 - `.sra` extraction fallback is not finished
-- project-level stage state still needs to be separated from run-level state
-- build output still includes warnings from vendored `fasterp`
+- project-level stage state is still inferred from run-level state
+- vendored `fasterp` remains patched for workspace quality gates
 
 ## Requirements
 
@@ -95,6 +76,8 @@ Single-command orchestration:
 ./target/release/rnaa run --root /data/my-rnaa-project --log-file /data/my-rnaa-project/logs/run-live.log
 ```
 
+## Runtime Behavior
+
 `rnaa run` prints compact stage summaries such as:
 
 ```text
@@ -108,7 +91,9 @@ Paths    /data/my-rnaa-project/metadata/samplesheet.tsv | /data/my-rnaa-project/
 
 `rnaa status` uses the same project-level stage model, so `normalize` and `corr` are reported as `0/1` or `1/1` instead of fake per-run progress.
 
-Annotated sidecar outputs are written where applicable, for example:
+Downloaded raw data, prepared references, quant outputs, and DE/corr outputs are persisted on disk and tracked in SQLite. Re-running commands reconciles existing artifacts where possible instead of redoing work blindly.
+
+For DE and correlation outputs, ENSG-keyed files remain the primary computational outputs. Annotated sidecar outputs are also written where applicable:
 
 - `gene_counts_annotated.tsv`
 - `gene_norm_counts_annotated.tsv`
@@ -124,6 +109,8 @@ Shared artifact storage can be enabled by setting one of:
 
 - `storage.shared_root` in project config
 - `RNAA_SHARED_ROOT` environment variable
+
+Project configuration currently uses the `[refs].ensembl` key for the preset release selector. In the current implementation this selects the matching GENCODE preset release, with `"latest"` mapping to the latest supported preset for the chosen organism.
 
 ## Repository Layout
 
@@ -145,6 +132,8 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
+
+The workspace currently includes a vendored `fasterp` patch to keep the documented clippy gate passing under the workspace settings.
 
 ## License
 

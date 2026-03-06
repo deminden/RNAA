@@ -1711,7 +1711,7 @@ dependencies = [
 
 [[package]]
 name = "rnaa"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "rnaa-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1756,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "rnaa-formats"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "csv",
@@ -1769,7 +1769,7 @@ dependencies = [
 
 [[package]]
 name = "rnaa-stages"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",

@@ -1329,6 +1329,7 @@ fn run_deseq2_stage(
     Ok((outputs.len() as u64, recorded))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reconcile_deseq2_stage(
     paths: &ProjectPaths,
     db: &Database,
@@ -1452,26 +1453,17 @@ fn register_deseq2_outputs(db: &Database, outputs: &[PathBuf]) -> Result<u64> {
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
-        let kind = if file_name == "gene_counts.tsv" {
-            ArtifactKind::Counts
-        } else if file_name == "gene_counts_annotated.tsv" {
-            ArtifactKind::Counts
-        } else if file_name == "gene_norm_counts.tsv" {
-            ArtifactKind::NormalizedCounts
-        } else if file_name == "gene_norm_counts_annotated.tsv" {
-            ArtifactKind::NormalizedCounts
-        } else if file_name == "vst.tsv" {
-            ArtifactKind::Vst
-        } else if file_name == "vst_annotated.tsv" {
-            ArtifactKind::Vst
-        } else if file_name == "vst.rds" {
-            ArtifactKind::VstRds
-        } else if file_name.starts_with("de_") && file_name.ends_with(".tsv") {
-            ArtifactKind::DeTable
-        } else if file_name.ends_with("_manifest.json") || file_name == "deseq2_manifest.json" {
-            ArtifactKind::Manifest
-        } else {
-            continue;
+        let kind = match file_name {
+            "gene_counts.tsv" | "gene_counts_annotated.tsv" => ArtifactKind::Counts,
+            "gene_norm_counts.tsv" | "gene_norm_counts_annotated.tsv" => {
+                ArtifactKind::NormalizedCounts
+            }
+            "vst.tsv" | "vst_annotated.tsv" => ArtifactKind::Vst,
+            "vst.rds" => ArtifactKind::VstRds,
+            "deseq2_manifest.json" => ArtifactKind::Manifest,
+            name if name.starts_with("de_") && name.ends_with(".tsv") => ArtifactKind::DeTable,
+            name if name.ends_with("_manifest.json") => ArtifactKind::Manifest,
+            _ => continue,
         };
         recorded += register_single_artifact(db, kind, output)?;
     }
@@ -2426,6 +2418,7 @@ fn compute_progress_snapshot(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn describe_active_work(
     runs: &[RunRecord],
     total_runs: u64,

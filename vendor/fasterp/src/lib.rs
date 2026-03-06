@@ -5,6 +5,7 @@
 //! # Features
 //! - `native` (default): Full functionality with threading, file I/O, S3, HTTP
 //! - `wasm`: WebAssembly support with buffer-based processing
+#![allow(dead_code, unused_variables, unused_unsafe)]
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
