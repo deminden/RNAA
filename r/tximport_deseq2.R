@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 
 suppressWarnings(suppressMessages({
-  required_pkgs <- c("jsonlite", "tximport", "DESeq2")
+  required_pkgs <- c("jsonlite", "tximport", "DESeq2", "rhdf5")
   missing <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
   if (length(missing) > 0) {
     stop(paste("missing required R packages:", paste(missing, collapse = ", ")), call. = FALSE)
@@ -77,7 +77,7 @@ main <- function() {
   files <- character()
   for (i in seq_len(nrow(samplesheet))) {
     run_id <- samplesheet$run_accession[[i]]
-    abundance <- file.path(quant_root, run_id, engine, "abundance.tsv")
+    abundance <- file.path(quant_root, run_id, engine, "abundance.h5")
     if (file.exists(abundance) && file.info(abundance)$size > 0) {
       keep_idx <- c(keep_idx, i)
       files <- c(files, abundance)

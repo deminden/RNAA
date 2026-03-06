@@ -2,8 +2,8 @@ use anyhow::Result;
 
 use crate::config::ProjectConfig;
 use crate::model::{
-    AdjustedMatrix, ContrastSpec, CorrelationMethod, OutputMode, QuantArtifacts, ReferenceBundle,
-    ResolvedProject, RunRecord, VerifiedFile,
+    AdjustedMatrix, ContrastSpec, CorrelationMethod, OutputMode, PreprocessArtifacts,
+    QuantArtifacts, ReferenceBundle, ResolvedProject, RunRecord, VerifiedFile,
 };
 use crate::paths::ProjectPaths;
 
@@ -22,6 +22,16 @@ pub trait Downloader: Send + Sync {
 
 pub trait Extractor: Send + Sync {
     fn ensure_fastq(&self, run: &RunRecord, paths: &ProjectPaths) -> Result<Vec<VerifiedFile>>;
+}
+
+pub trait Preprocessor: Send + Sync {
+    fn preprocess(
+        &self,
+        run: &RunRecord,
+        fastqs: &[VerifiedFile],
+        paths: &ProjectPaths,
+        config: &ProjectConfig,
+    ) -> Result<PreprocessArtifacts>;
 }
 
 pub trait ReferenceManager: Send + Sync {

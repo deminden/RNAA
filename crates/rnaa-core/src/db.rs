@@ -9,12 +9,18 @@ use serde::de::DeserializeOwned;
 use crate::config::{MetadataMergeStrategy, ProjectConfig};
 use crate::model::{
     ArtifactRecord, ContrastSpec, EventRecord, InputRecord, InputType, LibraryLayout,
-    MetadataOverrideRecord, ProjectRecord, RunRecord,
+    MetadataOverrideRecord, ProjectRecord, RunRecord, SharedBlobRecord,
 };
 use crate::state::RunState;
 use crate::util::now_rfc3339;
 
-const MIGRATIONS: &[(&str, &str)] = &[("0001_init", include_str!("../migrations/0001_init.sql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_init", include_str!("../migrations/0001_init.sql")),
+    (
+        "0002_shared_store",
+        include_str!("../migrations/0002_shared_store.sql"),
+    ),
+];
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -277,12 +283,14 @@ impl Database {
     pub fn record_artifact(&self, artifact: &ArtifactRecord) -> Result<()> {
         let conn = self.connect()?;
         conn.execute(
-            "INSERT OR REPLACE INTO artifacts (project_id, run_accession, kind, path, checksum_type, checksum, bytes, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT OR REPLACE INTO artifacts (project_id, run_accession, kind, path, blob_id, shared_path, checksum_type, checksum, bytes, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 artifact.project_id,
                 artifact.run_accession,
                 artifact.kind.as_str(),
                 artifact.path,
+                artifact.blob_id,
+                artifact.shared_path,
                 artifact.checksum_type,
                 artifact.checksum,
                 artifact.bytes as i64,
@@ -290,7 +298,46 @@ impl Database {
             ],
         )
         .with_context(|| format!("failed to record artifact {}", artifact.path))?;
+        if let Some(blob_id) = artifact.blob_id.as_deref() {
+            conn.execute(
+                "INSERT OR REPLACE INTO shared_blob_refs (blob_id, project_id, artifact_path, referenced_at) VALUES (?1, ?2, ?3, ?4)",
+                params![blob_id, artifact.project_id, artifact.path, now_rfc3339()],
+            )
+            .with_context(|| {
+                format!(
+                    "failed to link artifact {} to shared blob {blob_id}",
+                    artifact.path
+                )
+            })?;
+        }
         Ok(())
+    }
+
+    pub fn record_shared_blob(&self, blob: &SharedBlobRecord) -> Result<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO shared_blobs (blob_id, storage_path, checksum_type, checksum, bytes, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                blob.blob_id,
+                blob.storage_path,
+                blob.checksum_type,
+                blob.checksum,
+                blob.bytes as i64,
+                blob.created_at
+            ],
+        )
+        .with_context(|| format!("failed to record shared blob {}", blob.blob_id))?;
+        Ok(())
+    }
+
+    pub fn get_shared_blob(&self, blob_id: &str) -> Result<Option<SharedBlobRecord>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            "SELECT blob_id, storage_path, checksum_type, checksum, bytes, created_at FROM shared_blobs WHERE blob_id = ?1",
+        )?;
+        stmt.query_row(params![blob_id], parse_shared_blob)
+            .optional()
+            .context("failed to load shared blob")
     }
 
     pub fn list_artifacts(&self) -> Result<Vec<ArtifactRecord>> {
@@ -303,9 +350,9 @@ impl Database {
     ) -> Result<Vec<ArtifactRecord>> {
         let conn = self.connect()?;
         let sql = if run_accession.is_some() {
-            "SELECT project_id, run_accession, kind, path, checksum_type, checksum, bytes, created_at FROM artifacts WHERE run_accession = ?1 ORDER BY kind, path"
+            "SELECT project_id, run_accession, kind, path, blob_id, shared_path, checksum_type, checksum, bytes, created_at FROM artifacts WHERE run_accession = ?1 ORDER BY kind, path"
         } else {
-            "SELECT project_id, run_accession, kind, path, checksum_type, checksum, bytes, created_at FROM artifacts ORDER BY kind, path"
+            "SELECT project_id, run_accession, kind, path, blob_id, shared_path, checksum_type, checksum, bytes, created_at FROM artifacts ORDER BY kind, path"
         };
         let mut stmt = conn.prepare(sql)?;
         let rows = if let Some(run_accession) = run_accession {
@@ -620,7 +667,7 @@ fn parse_raw_run(row: &Row<'_>) -> rusqlite::Result<RawRun> {
 
 fn parse_artifact(row: &Row<'_>) -> rusqlite::Result<ArtifactRecord> {
     let kind_text: String = row.get(2)?;
-    let bytes: i64 = row.get(6)?;
+    let bytes: i64 = row.get(8)?;
     let kind = crate::model::ArtifactKind::from_str(&kind_text).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(
             2,
@@ -636,10 +683,24 @@ fn parse_artifact(row: &Row<'_>) -> rusqlite::Result<ArtifactRecord> {
         run_accession: row.get(1)?,
         kind,
         path: row.get(3)?,
-        checksum_type: row.get(4)?,
-        checksum: row.get(5)?,
+        blob_id: row.get(4)?,
+        shared_path: row.get(5)?,
+        checksum_type: row.get(6)?,
+        checksum: row.get(7)?,
         bytes: bytes as u64,
-        created_at: row.get(7)?,
+        created_at: row.get(9)?,
+    })
+}
+
+fn parse_shared_blob(row: &Row<'_>) -> rusqlite::Result<SharedBlobRecord> {
+    let bytes: i64 = row.get(4)?;
+    Ok(SharedBlobRecord {
+        blob_id: row.get(0)?,
+        storage_path: row.get(1)?,
+        checksum_type: row.get(2)?,
+        checksum: row.get(3)?,
+        bytes: bytes as u64,
+        created_at: row.get(5)?,
     })
 }
 
@@ -665,6 +726,7 @@ fn from_json_text<T: DeserializeOwned>(text: &str) -> Result<T> {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::fs;
     use tempfile::TempDir;
 
     #[test]
@@ -696,5 +758,49 @@ mod tests {
 
         let persisted = db.get_run("SRR1").unwrap().unwrap();
         assert_eq!(persisted.state, RunState::Verified);
+    }
+
+    #[test]
+    fn artifact_blob_linkage_is_persisted() {
+        let temp = TempDir::new().unwrap();
+        let config = ProjectConfig::default();
+        let db = Database::create(temp.path(), &config).unwrap();
+        let artifact_path = temp.path().join("quant").join("SRR1").join("abundance.h5");
+        fs::create_dir_all(artifact_path.parent().unwrap()).unwrap();
+        fs::write(&artifact_path, b"test").unwrap();
+
+        let blob = SharedBlobRecord {
+            blob_id: "sha256:abc123".to_string(),
+            storage_path: "/tmp/shared/blobs/sha256/ab/c1/abc123".to_string(),
+            checksum_type: "sha256".to_string(),
+            checksum: "abc123".to_string(),
+            bytes: 4,
+            created_at: now_rfc3339(),
+        };
+        db.record_shared_blob(&blob).unwrap();
+        db.record_artifact(&ArtifactRecord {
+            project_id: db.project_id().to_string(),
+            run_accession: Some("SRR1".to_string()),
+            kind: crate::model::ArtifactKind::QuantAbundanceH5,
+            path: artifact_path.display().to_string(),
+            blob_id: Some(blob.blob_id.clone()),
+            shared_path: Some(blob.storage_path.clone()),
+            checksum_type: "sha256".to_string(),
+            checksum: "abc123".to_string(),
+            bytes: 4,
+            created_at: now_rfc3339(),
+        })
+        .unwrap();
+
+        let artifacts = db.list_artifacts_for_run(Some("SRR1")).unwrap();
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].blob_id.as_deref(), Some("sha256:abc123"));
+        assert_eq!(
+            artifacts[0].shared_path.as_deref(),
+            Some("/tmp/shared/blobs/sha256/ab/c1/abc123")
+        );
+
+        let loaded_blob = db.get_shared_blob("sha256:abc123").unwrap().unwrap();
+        assert_eq!(loaded_blob.checksum, "abc123");
     }
 }

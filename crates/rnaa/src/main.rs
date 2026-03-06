@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,13 +11,13 @@ use regex::Regex;
 use rnaa_core::config::{CleanupMode, DownloadPreference, MetadataMergeStrategy, ProjectConfig};
 use rnaa_core::model::{
     ArtifactKind, ArtifactRecord, ContrastSpec, CorrelationMethod, EventRecord, InputType,
-    OutputMode, RemoteFile, RemoteFileKind, RunRecord, VerifiedFile,
+    OutputMode, RemoteFile, RemoteFileKind, RunRecord, SharedBlobRecord, VerifiedFile,
 };
 use rnaa_core::paths::ProjectPaths;
 use rnaa_core::samplesheet::{load_or_init_column_map, write_samplesheet};
 use rnaa_core::state::RunState;
 use rnaa_core::traits::{
-    Correlator, DifferentialExpression, MatrixAdjuster, Quantifier, ReferenceManager,
+    Correlator, DifferentialExpression, MatrixAdjuster, Preprocessor, Quantifier, ReferenceManager,
 };
 use rnaa_core::util::{compute_sha256, dir_size, file_size, now_rfc3339, sanitize_basename};
 use rnaa_core::{Database, ProjectRecord};
@@ -24,6 +25,7 @@ use rnaa_formats::matrix::{MatrixData, read_matrix_tsv, write_matrix_tsv};
 use rnaa_stages::corr::{MinCorrCorrelator, Residualizer};
 use rnaa_stages::deseq2::Deseq2Runner;
 use rnaa_stages::download::ShellDownloader;
+use rnaa_stages::preprocess::FasterpInProcessPreprocessor;
 use rnaa_stages::quant::RKallistoQuantifier;
 use rnaa_stages::refs::EnsemblReferenceManager;
 use rnaa_stages::resolver::EnaResolver;
@@ -145,8 +147,23 @@ struct InitArgs {
 
 #[derive(Args, Debug)]
 struct AddArgs {
-    #[arg(long = "id", required = true)]
+    #[arg(long = "id")]
     ids: Vec<String>,
+
+    #[arg(long = "sample")]
+    samples: Vec<String>,
+
+    #[arg(long = "include-sample")]
+    include_samples: Vec<String>,
+
+    #[arg(long = "exclude-sample")]
+    exclude_samples: Vec<String>,
+
+    #[arg(long = "where")]
+    where_predicates: Vec<String>,
+
+    #[arg(long = "exclude-where")]
+    exclude_where_predicates: Vec<String>,
 
     #[arg(long = "metadata")]
     metadata: Vec<PathBuf>,
@@ -202,6 +219,16 @@ struct QuantArgs {
     engine: Option<String>,
     #[arg(long)]
     threads: Option<usize>,
+    #[arg(long, default_value_t = false, conflicts_with = "no_preprocess")]
+    preprocess: bool,
+    #[arg(long, default_value_t = false, conflicts_with = "preprocess")]
+    no_preprocess: bool,
+    #[arg(long, default_value_t = false, conflicts_with = "preprocess_bypass")]
+    preprocess_strict: bool,
+    #[arg(long, default_value_t = false, conflicts_with = "preprocess_strict")]
+    preprocess_bypass: bool,
+    #[arg(long = "preprocess-max-mb")]
+    preprocess_max_mb: Option<usize>,
     #[arg(long)]
     cleanup: Option<String>,
     #[arg(long = "trash-days")]
@@ -289,9 +316,38 @@ fn cmd_add(
     args: AddArgs,
 ) -> Result<()> {
     let merge_strategy = parse_merge_strategy(&args.merge_strategy)?;
+    let mut total_inputs = 0_usize;
     for input_id in &args.ids {
         let input_type = InputType::from_accession(input_id)?;
         db.add_input(input_id, input_type)?;
+        total_inputs += 1;
+    }
+    for sample in &args.samples {
+        db.add_input(sample, InputType::Sample)?;
+        total_inputs += 1;
+    }
+    for sample in &args.include_samples {
+        db.add_input(sample, InputType::SampleInclude)?;
+        total_inputs += 1;
+    }
+    for sample in &args.exclude_samples {
+        db.add_input(sample, InputType::SampleExclude)?;
+        total_inputs += 1;
+    }
+    for predicate in &args.where_predicates {
+        validate_where_predicate(predicate)?;
+        db.add_input(predicate, InputType::FilterInclude)?;
+        total_inputs += 1;
+    }
+    for predicate in &args.exclude_where_predicates {
+        validate_where_predicate(predicate)?;
+        db.add_input(predicate, InputType::FilterExclude)?;
+        total_inputs += 1;
+    }
+    if total_inputs == 0 && args.metadata.is_empty() {
+        bail!(
+            "nothing to add; provide at least one --id/--sample/--include-sample/--exclude-sample/--where/--exclude-where or --metadata"
+        );
     }
 
     for metadata_path in &args.metadata {
@@ -318,7 +374,16 @@ fn cmd_add(
         db.add_metadata_override(metadata_path, &dest, merge_strategy)?;
     }
 
-    println!("added_inputs\t{}", args.ids.len());
+    println!("added_inputs\t{}", total_inputs);
+    println!("added_accessions\t{}", args.ids.len());
+    println!("added_samples\t{}", args.samples.len());
+    println!("added_include_samples\t{}", args.include_samples.len());
+    println!("added_exclude_samples\t{}", args.exclude_samples.len());
+    println!("added_where_predicates\t{}", args.where_predicates.len());
+    println!(
+        "added_exclude_where_predicates\t{}",
+        args.exclude_where_predicates.len()
+    );
     println!("metadata_overrides\t{}", args.metadata.len());
     Ok(())
 }
@@ -684,6 +749,8 @@ fn cmd_refs_prepare(
             run_accession: None,
             kind,
             path: path.display().to_string(),
+            blob_id: None,
+            shared_path: None,
             checksum_type: "sha256".to_string(),
             checksum: compute_sha256(&path)?,
             bytes: file_size(&path)?,
@@ -697,6 +764,8 @@ fn cmd_refs_prepare(
             run_accession: None,
             kind: ArtifactKind::ReferenceGeneAnnotation,
             path: annotation_path.display().to_string(),
+            blob_id: None,
+            shared_path: None,
             checksum_type: "sha256".to_string(),
             checksum: compute_sha256(annotation_path)?,
             bytes: file_size(annotation_path)?,
@@ -739,6 +808,31 @@ fn cmd_quant(
         config.save(&paths.config_path)?;
         db.set_project_config(&config)?;
     }
+    if args.preprocess {
+        config.quant.preprocess = true;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
+    if args.no_preprocess {
+        config.quant.preprocess = false;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
+    if args.preprocess_strict {
+        config.quant.preprocess_strict = true;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
+    if args.preprocess_bypass {
+        config.quant.preprocess_strict = false;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
+    if let Some(preprocess_max_mb) = args.preprocess_max_mb {
+        config.quant.preprocess_max_input_mb = preprocess_max_mb;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
     if let Some(cleanup) = args.cleanup {
         config.quant.cleanup = parse_cleanup_mode(&cleanup)?;
         config.save(&paths.config_path)?;
@@ -757,6 +851,7 @@ fn cmd_quant(
     }
     let reference = EnsemblReferenceManager::new()?.ensure_reference(paths, &config)?;
     let quantifier = RKallistoQuantifier;
+    let preprocessor = FasterpInProcessPreprocessor;
 
     let mut completed = 0_u64;
     let mut failed = 0_u64;
@@ -768,11 +863,13 @@ fn cmd_quant(
             "quantification started",
             serde_json::json!({
                 "engine": config.quant.engine,
-                "threads": config.quant.threads
+                "threads": config.quant.threads,
+                "preprocess": config.quant.preprocess,
+                "preprocess_strict": config.quant.preprocess_strict
             }),
         )?;
-        let fastqs = load_fastq_artifacts(db, &run.run_accession)?;
-        if fastqs.is_empty() {
+        let raw_fastqs = load_fastq_artifacts(db, &run.run_accession)?;
+        if raw_fastqs.is_empty() {
             let message = format!("no FASTQ artifacts found for {}", run.run_accession);
             db.set_run_state(&run.run_accession, RunState::QuantFailed, Some(&message))?;
             db.append_event(
@@ -785,14 +882,98 @@ fn cmd_quant(
             continue;
         }
 
-        match quantifier.quantify(&run, &fastqs, &reference, paths, &config) {
+        let mut quant_fastqs = raw_fastqs.clone();
+        if config.quant.preprocess {
+            match preprocessor.preprocess(&run, &raw_fastqs, paths, &config) {
+                Ok(preprocessed) => {
+                    for item in &preprocessed.fastqs {
+                        db.record_artifact(&ArtifactRecord {
+                            project_id: db.project_id().to_string(),
+                            run_accession: Some(run.run_accession.clone()),
+                            kind: item.artifact_kind,
+                            path: item.path.display().to_string(),
+                            blob_id: None,
+                            shared_path: None,
+                            checksum_type: item.checksum_type.clone(),
+                            checksum: item.checksum.clone(),
+                            bytes: item.bytes,
+                            created_at: now_rfc3339(),
+                        })?;
+                    }
+                    db.record_artifact(&ArtifactRecord {
+                        project_id: db.project_id().to_string(),
+                        run_accession: Some(run.run_accession.clone()),
+                        kind: ArtifactKind::PreprocessReport,
+                        path: preprocessed.report_json.display().to_string(),
+                        blob_id: None,
+                        shared_path: None,
+                        checksum_type: "sha256".to_string(),
+                        checksum: compute_sha256(&preprocessed.report_json)?,
+                        bytes: file_size(&preprocessed.report_json)?,
+                        created_at: now_rfc3339(),
+                    })?;
+                    db.append_event(
+                        "quant",
+                        Some(&run.run_accession),
+                        "preprocessing completed",
+                        serde_json::json!({
+                            "tool": preprocessed.tool_name,
+                            "version": preprocessed.tool_version,
+                            "reused": preprocessed.reused,
+                            "passed_reads": preprocessed.passed_reads,
+                            "failed_reads": preprocessed.failed_reads,
+                            "report_json": preprocessed.report_json.display().to_string(),
+                            "outputs": preprocessed
+                                .fastqs
+                                .iter()
+                                .map(|item| item.path.display().to_string())
+                                .collect::<Vec<_>>()
+                        }),
+                    )?;
+                    quant_fastqs = preprocessed.fastqs;
+                }
+                Err(err) if !config.quant.preprocess_strict => {
+                    db.append_event(
+                        "quant",
+                        Some(&run.run_accession),
+                        "preprocessing failed; using raw FASTQ",
+                        serde_json::json!({ "error": format!("{err:#}") }),
+                    )?;
+                }
+                Err(err) => {
+                    let message = format!("{err:#}");
+                    db.set_run_state(&run.run_accession, RunState::QuantFailed, Some(&message))?;
+                    db.append_event(
+                        "quant",
+                        Some(&run.run_accession),
+                        "quantification failed",
+                        serde_json::json!({ "error": message }),
+                    )?;
+                    failed += 1;
+                    continue;
+                }
+            }
+        }
+
+        match quantifier.quantify(&run, &quant_fastqs, &reference, paths, &config) {
             Ok(artifacts) => {
+                let abundance_checksum = compute_sha256(&artifacts.abundance_h5)?;
+                let abundance_bytes = file_size(&artifacts.abundance_h5)?;
+                let shared_link = register_shared_blob(
+                    db,
+                    &config,
+                    &artifacts.abundance_h5,
+                    &abundance_checksum,
+                    abundance_bytes,
+                )?;
                 let records = vec![
                     ArtifactRecord {
                         project_id: db.project_id().to_string(),
                         run_accession: Some(run.run_accession.clone()),
                         kind: ArtifactKind::QuantDir,
                         path: artifacts.out_dir.display().to_string(),
+                        blob_id: None,
+                        shared_path: None,
                         checksum_type: "none".to_string(),
                         checksum: String::new(),
                         bytes: dir_size(&artifacts.out_dir),
@@ -801,8 +982,36 @@ fn cmd_quant(
                     ArtifactRecord {
                         project_id: db.project_id().to_string(),
                         run_accession: Some(run.run_accession.clone()),
+                        kind: ArtifactKind::QuantAbundanceH5,
+                        path: artifacts.abundance_h5.display().to_string(),
+                        blob_id: shared_link.as_ref().map(|link| link.blob_id.clone()),
+                        shared_path: shared_link
+                            .as_ref()
+                            .map(|link| link.shared_path.display().to_string()),
+                        checksum_type: "sha256".to_string(),
+                        checksum: abundance_checksum,
+                        bytes: abundance_bytes,
+                        created_at: now_rfc3339(),
+                    },
+                    ArtifactRecord {
+                        project_id: db.project_id().to_string(),
+                        run_accession: Some(run.run_accession.clone()),
+                        kind: ArtifactKind::QuantRunInfo,
+                        path: artifacts.run_info_json.display().to_string(),
+                        blob_id: None,
+                        shared_path: None,
+                        checksum_type: "sha256".to_string(),
+                        checksum: compute_sha256(&artifacts.run_info_json)?,
+                        bytes: file_size(&artifacts.run_info_json)?,
+                        created_at: now_rfc3339(),
+                    },
+                    ArtifactRecord {
+                        project_id: db.project_id().to_string(),
+                        run_accession: Some(run.run_accession.clone()),
                         kind: ArtifactKind::Manifest,
                         path: artifacts.manifest_path.display().to_string(),
+                        blob_id: None,
+                        shared_path: None,
                         checksum_type: "sha256".to_string(),
                         checksum: compute_sha256(&artifacts.manifest_path)?,
                         bytes: file_size(&artifacts.manifest_path)?,
@@ -819,8 +1028,13 @@ fn cmd_quant(
                     "quantification completed",
                     serde_json::json!({
                         "out_dir": artifacts.out_dir.display().to_string(),
-                        "abundance_tsv": artifacts.abundance_tsv.display().to_string(),
-                        "run_info_json": artifacts.run_info_json.display().to_string()
+                        "abundance_h5": artifacts.abundance_h5.display().to_string(),
+                        "run_info_json": artifacts.run_info_json.display().to_string(),
+                        "shared_blob_id": shared_link.as_ref().map(|link| link.blob_id.clone()),
+                        "shared_blob_path": shared_link
+                            .as_ref()
+                            .map(|link| link.shared_path.display().to_string()),
+                        "preprocessed": config.quant.preprocess
                     }),
                 )?;
                 completed += 1;
@@ -965,6 +1179,8 @@ fn cmd_deseq2(
             run_accession: None,
             kind,
             path: output.display().to_string(),
+            blob_id: None,
+            shared_path: None,
             checksum_type: "sha256".to_string(),
             checksum: compute_sha256(output)?,
             bytes: file_size(output)?,
@@ -1108,6 +1324,8 @@ fn cmd_corr(
             run_accession: None,
             kind,
             path: output.display().to_string(),
+            blob_id: None,
+            shared_path: None,
             checksum_type: "sha256".to_string(),
             checksum: compute_sha256(output)?,
             bytes: file_size(output)?,
@@ -1120,6 +1338,8 @@ fn cmd_corr(
         run_accession: None,
         kind: ArtifactKind::AdjustedMatrix,
         path: adjusted.matrix_path.display().to_string(),
+        blob_id: None,
+        shared_path: None,
         checksum_type: "sha256".to_string(),
         checksum: compute_sha256(&adjusted.matrix_path)?,
         bytes: file_size(&adjusted.matrix_path)?,
@@ -1170,6 +1390,11 @@ fn cmd_run(
         QuantArgs {
             engine: None,
             threads: None,
+            preprocess: false,
+            no_preprocess: false,
+            preprocess_strict: false,
+            preprocess_bypass: false,
+            preprocess_max_mb: None,
             cleanup: None,
             trash_days: None,
         },
@@ -1713,6 +1938,131 @@ fn init_logging(
     Ok(guard)
 }
 
+#[derive(Debug, Clone)]
+struct SharedBlobLink {
+    blob_id: String,
+    shared_path: PathBuf,
+}
+
+fn register_shared_blob(
+    db: &Database,
+    config: &ProjectConfig,
+    source_path: &Path,
+    checksum: &str,
+    bytes: u64,
+) -> Result<Option<SharedBlobLink>> {
+    let Some(shared_root) = resolve_shared_root(config) else {
+        return Ok(None);
+    };
+    if checksum.len() < 4 {
+        bail!("invalid sha256 checksum for shared blob: {checksum}");
+    }
+
+    let blob_id = format!("sha256:{checksum}");
+    let shared_path = shared_root
+        .join("blobs")
+        .join("sha256")
+        .join(&checksum[0..2])
+        .join(&checksum[2..4])
+        .join(checksum);
+
+    materialize_shared_blob(source_path, &shared_path)?;
+
+    let shared_checksum = compute_sha256(&shared_path)?;
+    if shared_checksum != checksum {
+        bail!(
+            "shared blob checksum mismatch for {} (expected {}, got {})",
+            shared_path.display(),
+            checksum,
+            shared_checksum
+        );
+    }
+    let shared_bytes = file_size(&shared_path)?;
+    if shared_bytes != bytes {
+        bail!(
+            "shared blob size mismatch for {} (expected {}, got {})",
+            shared_path.display(),
+            bytes,
+            shared_bytes
+        );
+    }
+
+    db.record_shared_blob(&SharedBlobRecord {
+        blob_id: blob_id.clone(),
+        storage_path: shared_path.display().to_string(),
+        checksum_type: "sha256".to_string(),
+        checksum: checksum.to_string(),
+        bytes,
+        created_at: now_rfc3339(),
+    })?;
+
+    Ok(Some(SharedBlobLink {
+        blob_id,
+        shared_path,
+    }))
+}
+
+fn resolve_shared_root(config: &ProjectConfig) -> Option<PathBuf> {
+    let configured = config.storage.shared_root.trim();
+    if !configured.is_empty() {
+        return Some(PathBuf::from(configured));
+    }
+    std::env::var("RNAA_SHARED_ROOT").ok().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(trimmed))
+        }
+    })
+}
+
+fn materialize_shared_blob(source_path: &Path, shared_path: &Path) -> Result<()> {
+    if shared_path.exists() {
+        return Ok(());
+    }
+    let parent = shared_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("invalid shared blob path {}", shared_path.display()))?;
+    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
+
+    match fs::hard_link(source_path, shared_path) {
+        Ok(()) => return Ok(()),
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => return Ok(()),
+        Err(_) => {}
+    }
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock before UNIX_EPOCH")?
+        .as_nanos();
+    let temp_path = shared_path.with_extension(format!("tmp-{stamp}"));
+    fs::copy(source_path, &temp_path).with_context(|| {
+        format!(
+            "failed to copy {} into shared store temp {}",
+            source_path.display(),
+            temp_path.display()
+        )
+    })?;
+    match fs::rename(&temp_path, shared_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(&temp_path);
+            Ok(())
+        }
+        Err(err) => {
+            let _ = fs::remove_file(&temp_path);
+            Err(err).with_context(|| {
+                format!(
+                    "failed to finalize shared blob {} -> {}",
+                    temp_path.display(),
+                    shared_path.display()
+                )
+            })
+        }
+    }
+}
+
 fn parse_merge_strategy(value: &str) -> Result<MetadataMergeStrategy> {
     match value {
         "override" => Ok(MetadataMergeStrategy::Override),
@@ -1739,6 +2089,18 @@ fn parse_cleanup_mode(value: &str) -> Result<CleanupMode> {
         "all" => Ok(CleanupMode::All),
         _ => bail!("unsupported cleanup mode: {value}"),
     }
+}
+
+fn validate_where_predicate(value: &str) -> Result<()> {
+    let trimmed = value.trim();
+    let valid = trimmed.contains("!=") || trimmed.contains('=');
+    if !valid {
+        bail!(
+            "invalid where predicate '{}'; expected 'field=value' or 'field!=value'",
+            value
+        );
+    }
+    Ok(())
 }
 
 fn parse_cli_contrasts(items: &[String]) -> Result<Vec<ContrastSpec>> {

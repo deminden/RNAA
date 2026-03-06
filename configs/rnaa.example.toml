@@ -36,9 +36,15 @@ ensembl = "latest"
 custom_gtf = ""
 custom_cdna = ""
 
+[storage]
+shared_root = ""
+
 [quant]
 engine = "r-kallisto"
 threads = 16
+preprocess = false
+preprocess_strict = true
+preprocess_max_input_mb = 1024
 cleanup = "none"
 trash_days = 7
 cleanup_on = "success"

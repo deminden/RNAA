@@ -14,6 +14,8 @@ pub struct ProjectConfig {
     #[serde(default)]
     pub refs: RefsConfig,
     #[serde(default)]
+    pub storage: StorageConfig,
+    #[serde(default)]
     pub quant: QuantConfig,
     #[serde(default)]
     pub deseq2: Deseq2Config,
@@ -120,12 +122,24 @@ impl Default for RefsConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StorageConfig {
+    #[serde(default)]
+    pub shared_root: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantConfig {
     #[serde(default = "default_quant_engine")]
     pub engine: String,
     #[serde(default = "default_quant_threads")]
     pub threads: usize,
+    #[serde(default)]
+    pub preprocess: bool,
+    #[serde(default = "default_quant_preprocess_strict")]
+    pub preprocess_strict: bool,
+    #[serde(default = "default_quant_preprocess_max_input_mb")]
+    pub preprocess_max_input_mb: usize,
     #[serde(default)]
     pub cleanup: CleanupMode,
     #[serde(default = "default_trash_days")]
@@ -139,6 +153,9 @@ impl Default for QuantConfig {
         Self {
             engine: default_quant_engine(),
             threads: default_quant_threads(),
+            preprocess: false,
+            preprocess_strict: default_quant_preprocess_strict(),
+            preprocess_max_input_mb: default_quant_preprocess_max_input_mb(),
             cleanup: CleanupMode::None,
             trash_days: default_trash_days(),
             cleanup_on: CleanupWhen::Success,
@@ -291,6 +308,14 @@ fn default_quant_engine() -> String {
 
 fn default_quant_threads() -> usize {
     16
+}
+
+fn default_quant_preprocess_strict() -> bool {
+    true
+}
+
+fn default_quant_preprocess_max_input_mb() -> usize {
+    1024
 }
 
 fn default_trash_days() -> u64 {

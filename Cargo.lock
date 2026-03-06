@@ -450,6 +450,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
+name = "fasterp"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "flate2",
+ "indexmap",
+ "js-sys",
+ "memchr",
+ "once_cell",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1685,7 +1702,7 @@ dependencies = [
 
 [[package]]
 name = "rnaa"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1704,7 +1721,7 @@ dependencies = [
 
 [[package]]
 name = "rnaa-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1729,7 +1746,7 @@ dependencies = [
 
 [[package]]
 name = "rnaa-formats"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "csv",
@@ -1742,11 +1759,12 @@ dependencies = [
 
 [[package]]
 name = "rnaa-stages"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
  "csv",
+ "fasterp",
  "flate2",
  "md-5",
  "mincorr",

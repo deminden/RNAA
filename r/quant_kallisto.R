@@ -104,10 +104,10 @@ main <- function() {
     stop(msg, call. = FALSE)
   }
 
-  abundance_tsv <- file.path(outdir, "abundance.tsv")
+  abundance_h5 <- file.path(outdir, "abundance.h5")
   run_info_json <- file.path(outdir, "run_info.json")
-  if (!file.exists(abundance_tsv) || file.info(abundance_tsv)$size <= 0) {
-    stop("kallisto output missing abundance.tsv", call. = FALSE)
+  if (!file.exists(abundance_h5) || file.info(abundance_h5)$size <= 0) {
+    stop("kallisto output missing abundance.h5", call. = FALSE)
   }
   if (!file.exists(run_info_json) || file.info(run_info_json)$size <= 0) {
     stop("kallisto output missing run_info.json", call. = FALSE)

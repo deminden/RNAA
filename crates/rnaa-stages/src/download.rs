@@ -128,6 +128,8 @@ impl ShellDownloader {
                 run_accession: Some(run.run_accession.clone()),
                 kind: item.artifact_kind,
                 path: item.path.display().to_string(),
+                blob_id: None,
+                shared_path: None,
                 checksum_type: item.checksum_type.clone(),
                 checksum: item.checksum.clone(),
                 bytes: item.bytes,

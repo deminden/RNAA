@@ -33,6 +33,54 @@ The pipeline has to be restart-safe under server conditions. That means durable 
 5. Prioritize combined-cohort correctness over feature breadth.
 Multi-study harmonization, design validation, metadata discipline, and artifact provenance matter more than adding more aligners quickly.
 
+## Architecture Pivot: HDF5-First + Cross-Project Reuse
+
+This plan now assumes a storage architecture change:
+
+1. Persist quant outputs as HDF5-first artifacts.
+- Treat `abundance.h5` as the canonical quant payload.
+- Keep `run_info.json` and stage manifests for provenance.
+- Do not persist `abundance.tsv` in steady state. If a tool emits TSV by default, treat it as ephemeral and remove after verification.
+
+2. Persist large matrix outputs in HDF5 internally.
+- DE counts, normalized counts, transforms, adjusted matrices, and dense correlation outputs should use HDF5 contracts.
+- Human-readable TSV/CSV become export-time products, not canonical storage.
+
+3. Introduce a global shared artifact store outside project roots.
+- Add a configurable shared root (for example `RNAA_SHARED_ROOT`) with a content-addressed layout by sha256.
+- Project directories become views over shared immutable blobs plus project-local manifests/events.
+- Prefer hardlinks or reflinks where available; fall back to copy with checksum verification.
+
+4. Make reuse deterministic with cache keys.
+- Quant cache key must include:
+  - input FASTQ digests
+  - reference identity digest
+  - quant engine + version
+  - quant parameters
+  - preprocessing fingerprint
+- If the key already exists in shared storage, attach artifacts to the project without recomputation.
+
+5. Add explicit ownership, pinning, and GC.
+- Track which projects reference each blob.
+- Allow pinning of references/artifacts used by active projects.
+- Add garbage collection that removes unreferenced blobs after retention windows.
+
+6. Keep manifests and DB rows project-local, payloads global.
+- Project SQLite remains the control plane.
+- Payload immutability and dedupe live in the shared artifact store.
+- Every project artifact record should resolve to a global blob id plus a materialized path.
+
+7. Support sample-scoped project composition.
+- `rnaa add` must support sample-level selectors in addition to project/study/run IDs.
+- Accept explicit sample accessions plus metadata predicates for include/exclude filters.
+- Persist selectors as first-class inputs so cohort definitions are reproducible and rerunnable.
+
+8. Add optional FASTQ preprocessing with `fasterp` before quant.
+- `fasterp` is a trimming/QC preprocessor, not an aligner.
+- Keep raw downloaded FASTQ immutable; write trimmed FASTQ as derived artifacts.
+- Persist preprocessing reports (`json`, optional `html`) as provenance artifacts.
+- Include preprocessing tool/version/flags in quant cache identity so reuse is correctness-safe.
+
 ## Current State Snapshot
 
 ### Working now
@@ -57,6 +105,7 @@ Multi-study harmonization, design validation, metadata discipline, and artifact 
 - Cleanup policy exists in config and CLI flags, but real move-to-trash plus purge execution is not complete.
 - Extraction fallback (`xsra` and `vdb-native`) is still not implemented.
 - Project-stage state is still overloaded onto per-run state for DE and correlation.
+- Input granularity is still accession-centric (`RUN`, `STUDY`, `PROJECT`) with no sample-level selector contract.
 - Reference preparation, quantification, DESeq2, and correlation still need live integration tests and harder failure-path coverage.
 - There is no crash-recovery sweep yet for stale `*_RUNNING` states after abrupt process death.
 - There is no worker-budget scheduler yet; only download is truly parallel at the RNAA scheduler level.
@@ -191,6 +240,7 @@ The first commit should not present RNAA as production-ready yet. The minimum th
 3. State model correctness
 - add project-level stage state instead of overloading run-level state for DE and correlation
 - add startup recovery that converts stale `*_RUNNING` states into retryable interrupted failures
+- expand shared artifact-store linkage into full ownership, pinning, and GC semantics (basic blob linkage is now in place)
 
 4. Worker scheduling
 - implement the worker-budget model described above
@@ -215,20 +265,24 @@ The first commit should not present RNAA as production-ready yet. The minimum th
 - add reference-build locking so concurrent processes cannot trample shared cache creation
 - add output guardrails for dense correlation outputs
 - verify manifest completeness and failure-mode consistency across stages
+- add shared-store GC safety rails: retention windows, pinning, and lock-safe sweeping
 
 ## Recommended Delivery Sequence
 
 The smart path is:
 
-1. Finish reference preparation and CLI wiring.
-2. Finish per-run quantification via R + kallisto.
-3. Finish project-level DESeq2.
-4. Finish adjusted correlation in Rust + `mincorr`.
-5. Finish orchestration, export, and survey UX.
-6. Add extraction and cleanup policy completion.
-7. Harden operational behavior, tests, docs, and release packaging.
+1. Implement shared artifact store contracts and schema additions.
+2. Extend resolver/input contracts for sample-scoped cohort selection.
+3. Finish reference preparation and CLI wiring against shared storage.
+4. Finish per-run quantification via R + kallisto with HDF5-first canonical outputs and cache-key reuse.
+5. Add optional `fasterp` preprocessing contracts and CLI/config wiring.
+6. Finish project-level DESeq2 with HDF5-first internal outputs.
+7. Finish adjusted correlation in Rust + `mincorr` with HDF5 matrix contracts.
+8. Finish orchestration, export, and survey UX.
+9. Add extraction and cleanup policy completion.
+10. Harden operational behavior, tests, docs, and release packaging.
 
-This sequence is correct because each later stage depends on validated outputs from the earlier one, and because reference/quant/DE/correlation form the real scientific pipeline backbone.
+This sequence is correct because each later stage depends on validated outputs from the earlier one, and because shared storage identity plus HDF5 contracts must be stable before high-volume quant and cohort analysis.
 
 ## Stage 1: Foundation Hardening And Repo Hygiene
 
@@ -271,6 +325,32 @@ Without hygiene now, every next stage will repeat avoidable mistakes:
 - Core CLI commands have regression coverage.
 - Repository layout no longer contains accidental nested git repositories.
 
+## Stage 1B: Sample-Scoped Cohort Selection
+
+### Goal
+
+Allow users to build cohorts from selected samples, not only full projects/studies/runs.
+
+### Tasks
+
+- Extend `InputType` and resolver contracts to support sample accession inputs.
+- Add CLI support for sample-targeted ingestion:
+  - `rnaa add --id <sample_accession>`
+  - `rnaa add --id <study/project> --include-sample <sample_accession>`
+  - `rnaa add --id <study/project> --where '<predicate>'` for metadata-based filtering
+- Persist selectors as immutable input records so the same command can reproduce the same cohort definition.
+- Make include/exclude selection deterministic and auditable in resolve manifests.
+- Add resolver validation and clear error modes for:
+  - no runs matched the selectors
+  - sample accessions not found
+  - conflicting include/exclude rules
+- Add tests for sample-only cohorts and mixed selector + accession cohorts.
+
+### Acceptance criteria
+
+- Users can add an explicit subset of samples from large accessions without post-hoc manual edits.
+- Re-running resolve with the same selectors produces the same run set (modulo upstream accession drift, reported in manifests).
+
 ## Stage 2: Reference Preparation As A Production-Ready Stage
 
 ### Goal
@@ -300,10 +380,12 @@ The missing part is integration, testing, and hardening.
   - `--cdna`
 - Persist selected reference info into the DB or a stable reference manifest lookup table.
 - Record reference artifacts in the `artifacts` table.
+- Materialize reference payloads into the shared artifact store and link them into project views.
 - Add checksum verification for downloaded reference files.
 - Parse Ensembl `CHECKSUMS` when feasible instead of trusting only local sha256.
 - Handle reference reuse:
   - skip rebuild if manifest and artifacts already match
+  - skip redownload/reindex if matching blobs already exist in shared storage
   - rebuild if the index is missing or empty
 - Add offline unit tests for:
   - listing parsing
@@ -321,6 +403,7 @@ The missing part is integration, testing, and hardening.
 
 - `rnaa refs prepare --organism human --ensembl latest` works end to end.
 - Cached reruns are idempotent.
+- Two projects using the same reference reuse the same immutable blobs without duplicate payload bytes.
 - Reference manifest and artifacts are sufficient for downstream reproducibility.
 
 ## Stage 3: Per-Run Quantification Via R + Kallisto
@@ -333,22 +416,37 @@ Implement the first real quantification engine with clean Rust/R boundaries and 
 
 - Create `r/quant_kallisto.R`.
 - Add robust argument parsing in R.
+- Add a pre-quant preprocessing contract:
+  - optional `fasterp` execution per run
+  - deterministic output paths for trimmed FASTQ artifacts
+  - preprocessing manifest/report capture
 - Validate:
   - one FASTQ for single-end
   - two FASTQs for paired-end
   - kallisto index existence
   - output directory writability
+- Add tool policy:
+  - `fasterp` enabled/disabled via config and CLI
+  - strict mode (fail quant on preprocessing failure) vs bypass mode (warn and continue with raw FASTQ)
+- Run `fasterp` on FASTQ inputs before quant when enabled.
 - Run `kallisto quant` via `system2`, never shell concatenation.
 - Capture:
   - tool versions
   - command arguments
   - reference manifest hash
   - input FASTQ checksums
+- Capture preprocessing provenance:
+  - pre/post read counts
+  - trimmed FASTQ checksums
+  - `fasterp` version and flags
+- Define and persist a deterministic quant cache key from input digests + reference + engine + params + preprocessing fingerprint.
+- Reuse existing quant payloads from shared storage when the cache key matches.
 - Define success predicate in Rust:
   - output directory exists
-  - `abundance.tsv` exists and is non-empty
+  - `abundance.h5` exists and is non-empty
   - `run_info.json` exists and is parseable
-- Record quant artifacts into SQLite.
+- Record quant artifacts into SQLite with global blob linkage.
+- Treat `abundance.tsv` as non-canonical; if generated, purge it after validation.
 - Advance state:
   - `VERIFIED -> QUANT_RUNNING -> QUANT_DONE`
   - failure should produce `QUANT_FAILED` without damaging downloaded files
@@ -376,6 +474,8 @@ Quantification is the first place where the download layer proves its value. Unt
 
 - `rnaa quant` works on verified runs with human or mouse references.
 - Quant reruns are safe and deterministic.
+- Cross-project quant reuse works when inputs/reference/parameters match.
+- When preprocessing is enabled, quant consumes trimmed FASTQ and records reproducible preprocessing provenance.
 - Cleanup only triggers after verified quant success.
 
 ## Stage 4: Project-Level DESeq2 And Normalization
@@ -389,7 +489,7 @@ Turn multiple per-run quant outputs into a coherent project-level cohort analysi
 - Create `r/tximport_deseq2.R`.
 - Feed it:
   - samplesheet
-  - quant directories
+  - quant directories with canonical `abundance.h5`
   - `tx2gene.tsv`
   - design formula
   - contrasts
@@ -400,11 +500,11 @@ Turn multiple per-run quant outputs into a coherent project-level cohort analysi
   - provide actionable errors for missing `condition` or `batch`
 - Support contrast specification from CLI and persisted DB state.
 - Produce:
-  - `gene_counts.tsv`
-  - `gene_norm_counts.tsv`
-  - `vst.tsv`
+  - `gene_counts.h5`
+  - `gene_norm_counts.h5`
+  - `vst.h5`
   - `vst.rds`
-  - `de_<contrast>.tsv`
+  - `de_<contrast>.h5`
   - `size_factors.tsv`
   - optional PCA and sample distance outputs
 - Add manifest with:
@@ -439,6 +539,7 @@ This prevents awkward overloading of per-run state for cohort-wide outputs.
 - `rnaa deseq2 --design "~ batch + condition" --contrast condition A B` produces all expected artifacts.
 - Missing design columns fail early with actionable errors.
 - Cohort-level provenance is recorded cleanly.
+- Internal DE artifacts are HDF5-first; text tables are produced only through export surfaces.
 
 ## Stage 5: Adjusted Correlation In Rust + `mincorr`
 
@@ -449,7 +550,7 @@ Produce biologically interpretable, metadata-adjusted correlation outputs withou
 ### Tasks
 
 - Implement matrix loading from:
-  - VST TSV
+  - VST HDF5
   - normalized counts if requested
 - Implement geneset grammar parser:
   - `topvar:N`
@@ -463,7 +564,7 @@ Produce biologically interpretable, metadata-adjusted correlation outputs withou
   - fit per-gene linear model
   - return residual matrix
   - use `f64` internally
-- Persist adjusted matrix artifact and manifest.
+- Persist adjusted matrix artifact in HDF5 and manifest linkage into shared storage.
 - Replace the current external-binary assumption with linked `mincorr` usage where practical.
 - Define output modes:
   - top-k edges per gene
@@ -521,7 +622,7 @@ Turn the pipeline from a set of stage commands into an operable product.
   - verify ENA/Ensembl connectivity optionally
   - verify writable root and disk space threshold
 - Implement `export` formats:
-  - TSV/CSV first
+  - TSV/CSV generated from canonical HDF5 artifacts
   - parquet later if value justifies added complexity
 - Implement `survey` output layout:
   - metadata summary
@@ -545,6 +646,7 @@ Support `.sra` fallback paths without polluting the main downloader or quantifie
 
 - Implement `Extractor` trait concretely for `xsra`.
 - Detect `xsra` in `doctor`.
+- Detect optional `fasterp` in `doctor` for preprocessing-enabled deployments.
 - Route SRA-only runs through extractor before quantification.
 - Record SRA input artifacts and extracted FASTQ artifacts separately.
 - Add feature-flagged `vdb-native` extractor skeleton behind `ncbi-vdb-sys`.
@@ -569,6 +671,8 @@ Make RNAA believable on long-lived Linux servers under systemd.
   - quant should not start if disk is critically low
   - reference downloads should not duplicate on concurrent invocations
 - Add file locking where needed around shared reference/index creation.
+- Add file locking around shared artifact-store writes and GC sweeps.
+- Add a `rnaa gc` command for shared-store retention and orphan cleanup.
 - Add recovery drills:
   - interrupted download
   - interrupted quant
@@ -580,6 +684,7 @@ Make RNAA believable on long-lived Linux servers under systemd.
 
 - Stopping and restarting services does not corrupt state.
 - Shared references remain reusable under concurrent server processes.
+- Shared quant and matrix blobs remain reusable across projects under concurrent server processes.
 
 ## Stage 9: Testing Matrix And Validation
 
@@ -600,6 +705,7 @@ Move from "compiles and works on one path" to confidence across the main operati
   - small fixtures for resolve -> download planning -> quant wrapper command construction
   - synthetic DESeq2 input/output validation where possible
   - synthetic correlation fixtures
+  - shared-store reuse tests across two projects pointing to the same payloads
 - Live integration tests
   - opt-in ENA resolution
   - opt-in Ensembl reference acquisition
@@ -643,6 +749,9 @@ These should happen during the main stages, not as a giant isolated rewrite:
 
 - Introduce project-level stage state separate from run-level state.
 - Add stronger artifact uniqueness constraints and reference artifact recording.
+- Introduce a shared artifact-store abstraction with content addressing and refcount/pinning metadata.
+- Add sample-selector input models (sample accession and metadata predicate filters) with deterministic serialization.
+- Add a `Preprocessor` trait and artifact kinds for trimmed FASTQ + preprocessing reports.
 - Standardize all stage manifest writing through helper functions.
 - Add central error types for user-facing failures vs internal failures.
 - Add stable command-runner helpers for external tools.
@@ -653,15 +762,18 @@ These should happen during the main stages, not as a giant isolated rewrite:
 The immediate next coding order should be:
 
 1. repo hygiene and warning cleanup
-2. `refs prepare` CLI wiring and tests
-3. quantification via R + kallisto
-4. cleanup/trash semantics
-5. project-stage schema for DE/corr
-6. DESeq2 implementation
-7. Rust residualization + `mincorr` integration
-8. `run`, `export`, `survey`
-9. extraction support
-10. operational hardening, docs, and release packaging
+2. shared artifact-store schema and storage abstraction
+3. sample-scoped add/resolve selectors
+4. `refs prepare` CLI wiring and tests against shared storage
+5. preprocessing contract (`fasterp`) and trimmed FASTQ artifact model
+6. quantification via R + kallisto with HDF5-first persistence
+7. cleanup/trash semantics + shared-store pinning/GC policy
+8. project-stage schema for DE/corr
+9. DESeq2 implementation with HDF5-first outputs
+10. Rust residualization + `mincorr` integration with HDF5 matrix contracts
+11. `run`, `export`, `survey`
+12. extraction support
+13. operational hardening, docs, and release packaging
 
 ## Definition Of "Production-Grade" For RNAA
 

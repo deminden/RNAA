@@ -29,6 +29,8 @@ impl Quantifier for RKallistoQuantifier {
             .find(|item| {
                 item.artifact_kind == rnaa_core::ArtifactKind::FastqR1
                     || item.artifact_kind == rnaa_core::ArtifactKind::FastqSingle
+                    || item.artifact_kind == rnaa_core::ArtifactKind::FastqTrimmedR1
+                    || item.artifact_kind == rnaa_core::ArtifactKind::FastqTrimmedSingle
             })
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -36,9 +38,10 @@ impl Quantifier for RKallistoQuantifier {
                     run.run_accession
                 )
             })?;
-        let read2 = fastqs
-            .iter()
-            .find(|item| item.artifact_kind == rnaa_core::ArtifactKind::FastqR2);
+        let read2 = fastqs.iter().find(|item| {
+            item.artifact_kind == rnaa_core::ArtifactKind::FastqR2
+                || item.artifact_kind == rnaa_core::ArtifactKind::FastqTrimmedR2
+        });
 
         let out_dir = paths.quant_run_dir(&run.run_accession, &config.quant.engine);
         fs::create_dir_all(&out_dir)
@@ -85,11 +88,11 @@ impl Quantifier for RKallistoQuantifier {
             );
         }
 
-        let abundance_tsv = out_dir.join("abundance.tsv");
+        let abundance_h5 = out_dir.join("abundance.h5");
         let run_info_json = out_dir.join("run_info.json");
-        if !abundance_tsv.exists() || file_size(&abundance_tsv).unwrap_or_default() == 0 {
+        if !abundance_h5.exists() || file_size(&abundance_h5).unwrap_or_default() == 0 {
             bail!(
-                "quant output missing or empty abundance.tsv for {}",
+                "quant output missing or empty abundance.h5 for {}",
                 run.run_accession
             );
         }
@@ -98,6 +101,15 @@ impl Quantifier for RKallistoQuantifier {
                 "quant output missing or empty run_info.json for {}",
                 run.run_accession
             );
+        }
+        let abundance_tsv = out_dir.join("abundance.tsv");
+        if abundance_tsv.exists() {
+            fs::remove_file(&abundance_tsv).with_context(|| {
+                format!(
+                    "failed to remove non-canonical abundance.tsv for {}",
+                    run.run_accession
+                )
+            })?;
         }
 
         // Fallback manifest writer if the R script did not generate it.
@@ -147,11 +159,11 @@ impl Quantifier for RKallistoQuantifier {
                         bytes: 0,
                     },
                     ManifestArtifact {
-                        kind: "ABUNDANCE_TSV".to_string(),
-                        path: abundance_tsv.display().to_string(),
+                        kind: "ABUNDANCE_H5".to_string(),
+                        path: abundance_h5.display().to_string(),
                         checksum_type: "none".to_string(),
                         checksum: String::new(),
-                        bytes: file_size(&abundance_tsv).unwrap_or_default(),
+                        bytes: file_size(&abundance_h5).unwrap_or_default(),
                     },
                     ManifestArtifact {
                         kind: "RUN_INFO_JSON".to_string(),
@@ -172,7 +184,7 @@ impl Quantifier for RKallistoQuantifier {
         Ok(QuantArtifacts {
             run_accession: run.run_accession.clone(),
             out_dir,
-            abundance_tsv,
+            abundance_h5,
             run_info_json,
             manifest_path,
         })

@@ -22,6 +22,11 @@ pub enum InputType {
     Run,
     Study,
     Project,
+    Sample,
+    SampleInclude,
+    SampleExclude,
+    FilterInclude,
+    FilterExclude,
     Local,
 }
 
@@ -31,6 +36,11 @@ impl InputType {
             Self::Run => "RUN",
             Self::Study => "STUDY",
             Self::Project => "PROJECT",
+            Self::Sample => "SAMPLE",
+            Self::SampleInclude => "SAMPLE_INCLUDE",
+            Self::SampleExclude => "SAMPLE_EXCLUDE",
+            Self::FilterInclude => "FILTER_INCLUDE",
+            Self::FilterExclude => "FILTER_EXCLUDE",
             Self::Local => "LOCAL",
         }
     }
@@ -45,6 +55,13 @@ impl InputType {
         }
         if upper.starts_with("PRJ") {
             return Ok(Self::Project);
+        }
+        if upper.starts_with("SRS")
+            || upper.starts_with("ERS")
+            || upper.starts_with("DRS")
+            || upper.starts_with("SAM")
+        {
+            return Ok(Self::Sample);
         }
         bail!("unsupported accession type: {accession}")
     }
@@ -64,6 +81,11 @@ impl FromStr for InputType {
             "RUN" => Ok(Self::Run),
             "STUDY" => Ok(Self::Study),
             "PROJECT" => Ok(Self::Project),
+            "SAMPLE" => Ok(Self::Sample),
+            "SAMPLE_INCLUDE" => Ok(Self::SampleInclude),
+            "SAMPLE_EXCLUDE" => Ok(Self::SampleExclude),
+            "FILTER_INCLUDE" => Ok(Self::FilterInclude),
+            "FILTER_EXCLUDE" => Ok(Self::FilterExclude),
             "LOCAL" => Ok(Self::Local),
             _ => bail!("unknown input type: {value}"),
         }
@@ -188,8 +210,14 @@ pub enum ArtifactKind {
     FastqR1,
     FastqR2,
     FastqSingle,
+    FastqTrimmedR1,
+    FastqTrimmedR2,
+    FastqTrimmedSingle,
+    PreprocessReport,
     Sra,
     QuantDir,
+    QuantAbundanceH5,
+    QuantRunInfo,
     Counts,
     NormalizedCounts,
     Vst,
@@ -214,8 +242,14 @@ impl ArtifactKind {
             Self::FastqR1 => "FASTQ_R1",
             Self::FastqR2 => "FASTQ_R2",
             Self::FastqSingle => "FASTQ_SINGLE",
+            Self::FastqTrimmedR1 => "FASTQ_TRIMMED_R1",
+            Self::FastqTrimmedR2 => "FASTQ_TRIMMED_R2",
+            Self::FastqTrimmedSingle => "FASTQ_TRIMMED_SINGLE",
+            Self::PreprocessReport => "PREPROCESS_REPORT",
             Self::Sra => "SRA",
             Self::QuantDir => "KALLISTO_DIR",
+            Self::QuantAbundanceH5 => "ABUNDANCE_H5",
+            Self::QuantRunInfo => "RUN_INFO_JSON",
             Self::Counts => "COUNTS",
             Self::NormalizedCounts => "NORM_COUNTS",
             Self::Vst => "VST",
@@ -250,8 +284,14 @@ impl FromStr for ArtifactKind {
             "FASTQ_R1" => Ok(Self::FastqR1),
             "FASTQ_R2" => Ok(Self::FastqR2),
             "FASTQ_SINGLE" => Ok(Self::FastqSingle),
+            "FASTQ_TRIMMED_R1" => Ok(Self::FastqTrimmedR1),
+            "FASTQ_TRIMMED_R2" => Ok(Self::FastqTrimmedR2),
+            "FASTQ_TRIMMED_SINGLE" => Ok(Self::FastqTrimmedSingle),
+            "PREPROCESS_REPORT" => Ok(Self::PreprocessReport),
             "SRA" => Ok(Self::Sra),
             "KALLISTO_DIR" => Ok(Self::QuantDir),
+            "ABUNDANCE_H5" => Ok(Self::QuantAbundanceH5),
+            "RUN_INFO_JSON" => Ok(Self::QuantRunInfo),
             "COUNTS" => Ok(Self::Counts),
             "NORM_COUNTS" => Ok(Self::NormalizedCounts),
             "VST" => Ok(Self::Vst),
@@ -279,6 +319,20 @@ pub struct ArtifactRecord {
     pub run_accession: Option<String>,
     pub kind: ArtifactKind,
     pub path: String,
+    #[serde(default)]
+    pub blob_id: Option<String>,
+    #[serde(default)]
+    pub shared_path: Option<String>,
+    pub checksum_type: String,
+    pub checksum: String,
+    pub bytes: u64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedBlobRecord {
+    pub blob_id: String,
+    pub storage_path: String,
     pub checksum_type: String,
     pub checksum: String,
     pub bytes: u64,
@@ -353,9 +407,22 @@ pub struct ReferenceBundle {
 pub struct QuantArtifacts {
     pub run_accession: String,
     pub out_dir: PathBuf,
-    pub abundance_tsv: PathBuf,
+    pub abundance_h5: PathBuf,
     pub run_info_json: PathBuf,
     pub manifest_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreprocessArtifacts {
+    pub run_accession: String,
+    pub out_dir: PathBuf,
+    pub fastqs: Vec<VerifiedFile>,
+    pub report_json: PathBuf,
+    pub tool_name: String,
+    pub tool_version: String,
+    pub passed_reads: usize,
+    pub failed_reads: usize,
+    pub reused: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -430,4 +497,21 @@ pub struct SamplesheetRow {
     pub condition: Option<String>,
     pub batch: Option<String>,
     pub metadata: BTreeMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InputType;
+
+    #[test]
+    fn detects_sample_accessions() {
+        assert_eq!(
+            InputType::from_accession("SRS123").unwrap(),
+            InputType::Sample
+        );
+        assert_eq!(
+            InputType::from_accession("SAMN123").unwrap(),
+            InputType::Sample
+        );
+    }
 }

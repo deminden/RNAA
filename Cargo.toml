@@ -9,7 +9,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT"
 
 [workspace.dependencies]
@@ -17,6 +17,7 @@ anyhow = "1.0.100"
 chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.5.53", features = ["derive", "env"] }
 csv = "1.4.0"
+fasterp = { version = "0.2.1", default-features = false, features = ["wasm"] }
 flate2 = "1.1.5"
 hex = "0.4.3"
 md-5 = "0.10.6"
@@ -42,3 +43,6 @@ url = "2.5.7"
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
 walkdir = "2.5.0"
 which = "8.0.0"
+
+[patch.crates-io]
+fasterp = { path = "vendor/fasterp" }
