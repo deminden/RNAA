@@ -244,9 +244,9 @@ The first commit should not present RNAA as production-ready yet. The minimum th
 
 4. Worker scheduling
 - implement the worker-budget model described above
-- make download and quant overlap by default instead of serializing the project behind a stage boundary
+- ✅ implemented: download and quant now overlap by default in `rnaa run`
 - add explicit thread caps for DESeq2 and correlation
-- make quant parallel across runs instead of serial-at-the-RNAA-layer
+- ✅ implemented: quant supports bounded run-parallel execution via worker pool (`[quant].workers`, `rnaa quant --workers`)
 
 5. Honest feature surface
 - either implement cleanup, export, survey, and extraction, or clearly leave them out of the first public promise

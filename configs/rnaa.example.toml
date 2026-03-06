@@ -42,6 +42,7 @@ shared_root = ""
 [quant]
 engine = "r-kallisto"
 threads = 16
+workers = 0 # 0 = auto, otherwise fixed number of runs in parallel
 preprocess = false
 preprocess_strict = true
 preprocess_max_input_mb = 1024

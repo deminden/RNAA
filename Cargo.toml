@@ -22,6 +22,7 @@ flate2 = "1.1.5"
 hex = "0.4.3"
 md-5 = "0.10.6"
 mincorr = { git = "https://github.com/deminden/min-rust-corr" }
+rsfgsea = { git = "https://github.com/deminden/rsfgsea", package = "rsfgsea" }
 nalgebra = { version = "0.34.1", features = ["serde-serialize"] }
 ndarray = { version = "0.17.2", features = ["serde"] }
 num_cpus = "1.17.0"

@@ -341,6 +341,8 @@ fn build_download_command(
             args: vec![
                 "--fail".to_string(),
                 "--location".to_string(),
+                "--silent".to_string(),
+                "--show-error".to_string(),
                 "--continue-at".to_string(),
                 "-".to_string(),
                 "--retry".to_string(),
@@ -503,6 +505,8 @@ mod tests {
             vec![
                 "--fail",
                 "--location",
+                "--silent",
+                "--show-error",
                 "--continue-at",
                 "-",
                 "--retry",

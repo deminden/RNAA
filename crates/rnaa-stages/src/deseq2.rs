@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use rnaa_core::config::ProjectConfig;
 use rnaa_core::manifest::{ManifestArtifact, StageManifest};
 use rnaa_core::model::{ContrastSpec, ReferenceBundle};
@@ -49,12 +49,23 @@ impl DifferentialExpression for Deseq2Runner {
             .arg(&config.quant.engine)
             .arg("--tx2gene")
             .arg(&reference.tx2gene_path)
+            .arg("--gene-annotation")
+            .arg(
+                reference
+                    .gene_annotation_path
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("reference missing gene annotation table"))?,
+            )
             .arg("--design")
             .arg(design)
             .arg("--transform")
             .arg(&config.deseq2.transform)
             .arg("--counts-from-abundance")
             .arg(&config.deseq2.counts_from_abundance)
+            .arg("--ignore-tx-version")
+            .arg("true")
+            .arg("--ignore-after-bar")
+            .arg("false")
             .arg("--outdir")
             .arg(&de_dir)
             .arg("--manifest-out")
@@ -76,8 +87,11 @@ impl DifferentialExpression for Deseq2Runner {
 
         let mut outputs = vec![
             de_dir.join("gene_counts.tsv"),
+            de_dir.join("gene_counts_annotated.tsv"),
             de_dir.join("gene_norm_counts.tsv"),
+            de_dir.join("gene_norm_counts_annotated.tsv"),
             de_dir.join("vst.tsv"),
+            de_dir.join("vst_annotated.tsv"),
             manifest_path.clone(),
         ];
         let optional = [de_dir.join("vst.rds"), de_dir.join("size_factors.tsv")];
@@ -90,6 +104,10 @@ impl DifferentialExpression for Deseq2Runner {
             let path = de_dir.join(format!("de_{}.tsv", contrast.name));
             if path.exists() {
                 outputs.push(path);
+            }
+            let annotated = de_dir.join(format!("de_{}_annotated.tsv", contrast.name));
+            if annotated.exists() {
+                outputs.push(annotated);
             }
         }
 

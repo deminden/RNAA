@@ -39,6 +39,20 @@ required_arg <- function(args, name) {
   value
 }
 
+parse_bool <- function(value, default = FALSE) {
+  if (is.null(value) || identical(value, "")) {
+    return(default)
+  }
+  normalized <- tolower(trimws(value))
+  if (normalized %in% c("1", "true", "t", "yes", "y")) {
+    return(TRUE)
+  }
+  if (normalized %in% c("0", "false", "f", "no", "n")) {
+    return(FALSE)
+  }
+  stop(paste("invalid boolean value:", value), call. = FALSE)
+}
+
 split_contrast <- function(raw) {
   parts <- strsplit(raw, "|", fixed = TRUE)[[1]]
   if (length(parts) < 3L) {
@@ -50,8 +64,59 @@ split_contrast <- function(raw) {
   list(factor = parts[[1]], level_a = parts[[2]], level_b = parts[[3]], name = parts[[4]])
 }
 
+design_variables <- function(formula_string) {
+  terms <- attr(stats::terms(stats::as.formula(formula_string)), "term.labels")
+  if (length(terms) == 0L) {
+    return(character())
+  }
+  unique(trimws(unlist(strsplit(terms, "[:*+]"))))
+}
+
 sanitize_name <- function(value) {
   gsub("[^A-Za-z0-9_.-]", "_", value)
+}
+
+normalize_stable_id <- function(value) {
+  sub("\\.[0-9]+$", "", value)
+}
+
+load_gene_annotation <- function(path) {
+  if (is.null(path) || identical(path, "")) {
+    return(NULL)
+  }
+  annotation <- utils::read.delim(path, check.names = FALSE, stringsAsFactors = FALSE)
+  if (!"gene_id" %in% colnames(annotation)) {
+    stop("gene annotation must contain gene_id column", call. = FALSE)
+  }
+  if (!"gene_name" %in% colnames(annotation)) {
+    annotation$gene_name <- ""
+  }
+  if (!"gene_biotype" %in% colnames(annotation)) {
+    annotation$gene_biotype <- ""
+  }
+  annotation$gene_id <- normalize_stable_id(annotation$gene_id)
+  annotation <- annotation[, c("gene_id", "gene_name", "gene_biotype")]
+  annotation <- annotation[!duplicated(annotation$gene_id), , drop = FALSE]
+  rownames(annotation) <- annotation$gene_id
+  annotation
+}
+
+annotate_table <- function(df, annotation) {
+  if (is.null(annotation) || !"gene_id" %in% colnames(df)) {
+    return(df)
+  }
+  idx <- match(df$gene_id, annotation$gene_id)
+  gene_name <- annotation$gene_name[idx]
+  gene_biotype <- annotation$gene_biotype[idx]
+  gene_name[is.na(gene_name)] <- ""
+  gene_biotype[is.na(gene_biotype)] <- ""
+  payload_cols <- setdiff(colnames(df), "gene_id")
+  cbind(
+    gene_id = df$gene_id,
+    gene_symbol = gene_name,
+    gene_biotype = gene_biotype,
+    df[, payload_cols, drop = FALSE]
+  )
 }
 
 main <- function() {
@@ -60,9 +125,12 @@ main <- function() {
   quant_root <- required_arg(args, "quant-root")
   engine <- required_arg(args, "engine")
   tx2gene_path <- required_arg(args, "tx2gene")
+  gene_annotation_path <- args[["gene-annotation"]]
   design_raw <- required_arg(args, "design")
   transform <- required_arg(args, "transform")
   counts_from_abundance <- required_arg(args, "counts-from-abundance")
+  ignore_tx_version <- parse_bool(args[["ignore-tx-version"]], default = TRUE)
+  ignore_after_bar <- parse_bool(args[["ignore-after-bar"]], default = FALSE)
   outdir <- required_arg(args, "outdir")
   manifest_out <- required_arg(args, "manifest-out")
 
@@ -89,6 +157,14 @@ main <- function() {
   samplesheet <- samplesheet[keep_idx, , drop = FALSE]
   rownames(samplesheet) <- samplesheet$run_accession
   names(files) <- samplesheet$run_accession
+  for (column in design_variables(design_raw)) {
+    if (!column %in% colnames(samplesheet)) {
+      next
+    }
+    if (is.character(samplesheet[[column]])) {
+      samplesheet[[column]] <- as.factor(samplesheet[[column]])
+    }
+  }
 
   tx2gene <- utils::read.delim(tx2gene_path, check.names = FALSE, stringsAsFactors = FALSE)
   if (ncol(tx2gene) < 2L) {
@@ -96,21 +172,29 @@ main <- function() {
   }
   tx2gene <- tx2gene[, 1:2]
   colnames(tx2gene) <- c("TXNAME", "GENEID")
+  tx2gene$TXNAME <- normalize_stable_id(tx2gene$TXNAME)
+  tx2gene$GENEID <- normalize_stable_id(tx2gene$GENEID)
+  tx2gene <- tx2gene[!duplicated(tx2gene$TXNAME), , drop = FALSE]
+  gene_annotation <- load_gene_annotation(gene_annotation_path)
 
-  txi <- tximport::tximport(
-    files,
-    type = "kallisto",
-    tx2gene = tx2gene,
-    countsFromAbundance = counts_from_abundance
-  )
+  tximport_stdout <- utils::capture.output({
+    txi <- suppressMessages(suppressWarnings(tximport::tximport(
+      files,
+      type = "kallisto",
+      tx2gene = tx2gene,
+      countsFromAbundance = counts_from_abundance,
+      ignoreTxVersion = ignore_tx_version,
+      ignoreAfterBar = ignore_after_bar
+    )))
+  })
 
   design_formula <- stats::as.formula(design_raw)
-  dds <- DESeq2::DESeqDataSetFromTximport(
+  dds <- suppressMessages(suppressWarnings(DESeq2::DESeqDataSetFromTximport(
     txi = txi,
     colData = samplesheet,
     design = design_formula
-  )
-  dds <- DESeq2::DESeq(dds)
+  )))
+  dds <- suppressMessages(DESeq2::DESeq(dds, quiet = TRUE))
 
   if (!dir.exists(outdir)) {
     dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
@@ -118,16 +202,32 @@ main <- function() {
 
   gene_counts <- DESeq2::counts(dds, normalized = FALSE)
   gene_norm <- DESeq2::counts(dds, normalized = TRUE)
+  gene_counts_df <- cbind(gene_id = rownames(gene_counts), as.data.frame(gene_counts))
   utils::write.table(
-    cbind(gene_id = rownames(gene_counts), as.data.frame(gene_counts)),
+    gene_counts_df,
     file = file.path(outdir, "gene_counts.tsv"),
     sep = "\t",
     quote = FALSE,
     row.names = FALSE
   )
   utils::write.table(
-    cbind(gene_id = rownames(gene_norm), as.data.frame(gene_norm)),
+    annotate_table(gene_counts_df, gene_annotation),
+    file = file.path(outdir, "gene_counts_annotated.tsv"),
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+  )
+  gene_norm_df <- cbind(gene_id = rownames(gene_norm), as.data.frame(gene_norm))
+  utils::write.table(
+    gene_norm_df,
     file = file.path(outdir, "gene_norm_counts.tsv"),
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+  )
+  utils::write.table(
+    annotate_table(gene_norm_df, gene_annotation),
+    file = file.path(outdir, "gene_norm_counts_annotated.tsv"),
     sep = "\t",
     quote = FALSE,
     row.names = FALSE
@@ -139,9 +239,17 @@ main <- function() {
     transformed <- DESeq2::vst(dds, blind = TRUE)
   }
   vst_mat <- SummarizedExperiment::assay(transformed)
+  vst_df <- cbind(gene_id = rownames(vst_mat), as.data.frame(vst_mat))
   utils::write.table(
-    cbind(gene_id = rownames(vst_mat), as.data.frame(vst_mat)),
+    vst_df,
     file = file.path(outdir, "vst.tsv"),
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+  )
+  utils::write.table(
+    annotate_table(vst_df, gene_annotation),
+    file = file.path(outdir, "vst_annotated.tsv"),
     sep = "\t",
     quote = FALSE,
     row.names = FALSE
@@ -175,6 +283,13 @@ main <- function() {
       quote = FALSE,
       row.names = FALSE
     )
+    utils::write.table(
+      annotate_table(res_df[, c("gene_id", setdiff(colnames(res_df), "gene_id"))], gene_annotation),
+      file = file.path(outdir, paste0("de_", sanitize_name(contrast$name), "_annotated.tsv")),
+      sep = "\t",
+      quote = FALSE,
+      row.names = FALSE
+    )
     de_outputs <- c(de_outputs, out_path)
   }
 
@@ -188,6 +303,8 @@ main <- function() {
       design = design_raw,
       transform = transform,
       counts_from_abundance = counts_from_abundance,
+      ignore_tx_version = ignore_tx_version,
+      ignore_after_bar = ignore_after_bar,
       contrasts = args$contrast,
       samples_used = nrow(samplesheet)
     ),
@@ -198,12 +315,16 @@ main <- function() {
     ),
     outputs = list(
       gene_counts = file.path(outdir, "gene_counts.tsv"),
+      gene_counts_annotated = file.path(outdir, "gene_counts_annotated.tsv"),
       gene_norm_counts = file.path(outdir, "gene_norm_counts.tsv"),
+      gene_norm_counts_annotated = file.path(outdir, "gene_norm_counts_annotated.tsv"),
       vst = file.path(outdir, "vst.tsv"),
+      vst_annotated = file.path(outdir, "vst_annotated.tsv"),
       vst_rds = file.path(outdir, "vst.rds"),
       size_factors = file.path(outdir, "size_factors.tsv"),
       de_tables = de_outputs
     ),
+    captured_stdout = tximport_stdout,
     session_info = utils::capture.output(sessionInfo())
   )
   dir.create(dirname(manifest_out), recursive = TRUE, showWarnings = FALSE)

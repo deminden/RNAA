@@ -134,6 +134,8 @@ pub struct QuantConfig {
     pub engine: String,
     #[serde(default = "default_quant_threads")]
     pub threads: usize,
+    #[serde(default = "default_quant_workers")]
+    pub workers: usize,
     #[serde(default)]
     pub preprocess: bool,
     #[serde(default = "default_quant_preprocess_strict")]
@@ -153,6 +155,7 @@ impl Default for QuantConfig {
         Self {
             engine: default_quant_engine(),
             threads: default_quant_threads(),
+            workers: default_quant_workers(),
             preprocess: false,
             preprocess_strict: default_quant_preprocess_strict(),
             preprocess_max_input_mb: default_quant_preprocess_max_input_mb(),
@@ -308,6 +311,10 @@ fn default_quant_engine() -> String {
 
 fn default_quant_threads() -> usize {
     16
+}
+
+fn default_quant_workers() -> usize {
+    0
 }
 
 fn default_quant_preprocess_strict() -> bool {

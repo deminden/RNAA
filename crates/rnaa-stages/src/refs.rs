@@ -53,11 +53,11 @@ impl ReferenceManager for EnsemblReferenceManager {
         fs::create_dir_all(&reference_dir)
             .with_context(|| format!("failed to create {}", reference_dir.display()))?;
 
-        let cdna_path = reference_dir.join(
-            spec.cdna_source
+        let transcriptome_path = reference_dir.join(
+            spec.transcript_source
                 .basename
                 .clone()
-                .unwrap_or_else(|| "transcriptome.cdna.fa.gz".to_string()),
+                .unwrap_or_else(|| "transcriptome.fa.gz".to_string()),
         );
         let gtf_path = reference_dir.join(
             spec.gtf_source
@@ -65,12 +65,15 @@ impl ReferenceManager for EnsemblReferenceManager {
                 .clone()
                 .unwrap_or_else(|| "annotations.gtf.gz".to_string()),
         );
-        ensure_source_materialized(&spec.cdna_source, &cdna_path)?;
+        ensure_source_materialized(&spec.transcript_source, &transcriptome_path)?;
         ensure_source_materialized(&spec.gtf_source, &gtf_path)?;
 
         let tx2gene_path = reference_dir.join("tx2gene.tsv");
         let gene_annotation_path = reference_dir.join("gene_annotation.tsv");
-        if !tx2gene_path.exists() || !gene_annotation_path.exists() {
+        if !tx2gene_path.exists()
+            || !gene_annotation_path.exists()
+            || annotation_tables_need_rebuild(&tx2gene_path, &gene_annotation_path)?
+        {
             build_annotation_tables(&gtf_path, &tx2gene_path, &gene_annotation_path)?;
         }
 
@@ -81,7 +84,7 @@ impl ReferenceManager for EnsemblReferenceManager {
                 .arg("index")
                 .arg("-i")
                 .arg(&kallisto_index_path)
-                .arg(&cdna_path)
+                .arg(&transcriptome_path)
                 .status()
                 .context("failed to spawn kallisto")?;
             if !status.success() {
@@ -98,8 +101,9 @@ impl ReferenceManager for EnsemblReferenceManager {
             finished_at: now_rfc3339(),
             parameters: json!({
                 "organism": spec.organism,
-                "ensembl": spec.release,
-                "cdna_source": spec.cdna_source.describe(),
+                "reference_release": spec.release,
+                "reference_provider": spec.provider,
+                "transcript_source": spec.transcript_source.describe(),
                 "gtf_source": spec.gtf_source.describe(),
             }),
             tool_versions: BTreeMap::from_iter(
@@ -122,16 +126,18 @@ impl ReferenceManager for EnsemblReferenceManager {
                 })
                 .collect(),
             output_artifacts: vec![
-                manifest_artifact("REFERENCE_CDNA", &cdna_path)?,
+                manifest_artifact("REFERENCE_TRANSCRIPTOME", &transcriptome_path)?,
                 manifest_artifact("REFERENCE_GTF", &gtf_path)?,
                 manifest_artifact("REFERENCE_TX2GENE", &tx2gene_path)?,
                 manifest_artifact("REFERENCE_GENE_ANNOTATION", &gene_annotation_path)?,
                 manifest_artifact("REFERENCE_INDEX", &kallisto_index_path)?,
             ],
             notes: vec![
-                "Reference caching is deterministic by organism/release or custom source fingerprint."
+                "Reference caching is deterministic by provider/release or custom source fingerprint."
                     .to_string(),
                 "tx2gene.tsv and gene_annotation.tsv are derived from the GTF and reused by DE/correlation stages."
+                    .to_string(),
+                "Default human/mouse preset uses a single GENCODE transcripts FASTA paired with the matching GTF."
                     .to_string(),
             ],
         };
@@ -141,7 +147,7 @@ impl ReferenceManager for EnsemblReferenceManager {
             id: spec.reference_id,
             organism: spec.organism,
             ensembl_release: spec.release,
-            cdna_path,
+            cdna_path: transcriptome_path,
             gtf_path,
             kallisto_index_path,
             tx2gene_path,
@@ -154,9 +160,10 @@ impl ReferenceManager for EnsemblReferenceManager {
 #[derive(Debug, Clone)]
 struct ReferenceSpec {
     reference_id: String,
+    provider: String,
     organism: String,
     release: String,
-    cdna_source: SourceSpec,
+    transcript_source: SourceSpec,
     gtf_source: SourceSpec,
     inputs: Vec<SourceSpec>,
 }
@@ -192,22 +199,24 @@ impl SourceSpec {
 #[derive(Debug, Clone, Copy)]
 struct OrganismPreset {
     key: &'static str,
-    species_dir: &'static str,
-    prefix: &'static str,
+    gencode_dir: &'static str,
+    gencode_prefix: &'static str,
 }
 
 const ORGANISM_PRESETS: &[OrganismPreset] = &[
     OrganismPreset {
         key: "human",
-        species_dir: "homo_sapiens",
-        prefix: "Homo_sapiens",
+        gencode_dir: "Gencode_human",
+        gencode_prefix: "gencode.v",
     },
     OrganismPreset {
         key: "mouse",
-        species_dir: "mus_musculus",
-        prefix: "Mus_musculus",
+        gencode_dir: "Gencode_mouse",
+        gencode_prefix: "gencode.vM",
     },
 ];
+
+const PRESET_REFERENCE_LAYOUT_VERSION: &str = "txall_v2";
 
 fn resolve_reference_spec(client: &Client, config: &ProjectConfig) -> Result<ReferenceSpec> {
     if !config.refs.custom_cdna.is_empty() || !config.refs.custom_gtf.is_empty() {
@@ -242,9 +251,10 @@ fn resolve_reference_spec(client: &Client, config: &ProjectConfig) -> Result<Ref
         };
         return Ok(ReferenceSpec {
             reference_id,
+            provider: "custom".to_string(),
             organism: config.refs.organism.clone(),
             release: "custom".to_string(),
-            cdna_source: cdna_source.clone(),
+            transcript_source: cdna_source.clone(),
             gtf_source: gtf_source.clone(),
             inputs: vec![cdna_source, gtf_source],
         });
@@ -256,56 +266,47 @@ fn resolve_reference_spec(client: &Client, config: &ProjectConfig) -> Result<Ref
         .copied()
         .ok_or_else(|| anyhow!("unsupported organism preset {}", config.refs.organism))?;
 
-    let latest = config.refs.ensembl == "latest";
-    let cdna_dir = if latest {
-        format!(
-            "https://ftp.ensembl.org/pub/current_fasta/{}/cdna/",
-            preset.species_dir
-        )
-    } else {
-        format!(
-            "https://ftp.ensembl.org/pub/release-{}/fasta/{}/cdna/",
-            config.refs.ensembl, preset.species_dir
-        )
+    let requested_release = normalize_gencode_release(&config.refs.ensembl, preset)?;
+    let release_dir = match &requested_release {
+        None => "latest_release".to_string(),
+        Some(release) => format!("release_{release}"),
     };
-    let gtf_dir = if latest {
-        format!(
-            "https://ftp.ensembl.org/pub/current_gtf/{}/",
-            preset.species_dir
-        )
-    } else {
-        format!(
-            "https://ftp.ensembl.org/pub/release-{}/gtf/{}/",
-            config.refs.ensembl, preset.species_dir
-        )
-    };
-
-    let cdna_listing = fetch_listing(client, &cdna_dir)?;
-    let gtf_listing = fetch_listing(client, &gtf_dir)?;
-    let cdna_file = find_cdna_file(&cdna_listing, preset.prefix)?;
-    let gtf_file = find_gtf_file(&gtf_listing, preset.prefix)?;
+    let base_dir = format!(
+        "https://ftp.ebi.ac.uk/pub/databases/gencode/{}/{}/",
+        preset.gencode_dir, release_dir
+    );
+    let listing = fetch_listing(client, &base_dir)?;
+    let transcript_file = find_gencode_transcripts_file(&listing, preset.gencode_prefix)?;
+    let gtf_file = find_gencode_gtf_file(&listing, preset.gencode_prefix)?;
     let release =
-        extract_release_from_gtf(&gtf_file).unwrap_or_else(|| config.refs.ensembl.clone());
-    let reference_id = format!("{}_ensembl_{}", preset.key, release);
+        extract_gencode_release(&transcript_file).unwrap_or_else(|| config.refs.ensembl.clone());
+    let reference_id = format!(
+        "{}_gencode_{}_{}",
+        preset.key,
+        sanitize_release_id(&release),
+        PRESET_REFERENCE_LAYOUT_VERSION
+    );
 
-    let cdna_source = SourceSpec {
+    let transcript_source = SourceSpec {
         kind: SourceKind::RemoteUrl,
-        location: format!("{cdna_dir}{cdna_file}"),
-        basename: Some(cdna_file),
+        location: format!("{base_dir}{transcript_file}"),
+        basename: Some(transcript_file),
     };
     let gtf_source = SourceSpec {
         kind: SourceKind::RemoteUrl,
-        location: format!("{gtf_dir}{gtf_file}"),
+        location: format!("{base_dir}{gtf_file}"),
         basename: Some(gtf_file),
     };
+    let inputs = vec![transcript_source.clone(), gtf_source.clone()];
 
     Ok(ReferenceSpec {
         reference_id,
+        provider: "gencode".to_string(),
         organism: preset.key.to_string(),
         release,
-        cdna_source: cdna_source.clone(),
+        transcript_source: transcript_source.clone(),
         gtf_source: gtf_source.clone(),
-        inputs: vec![cdna_source, gtf_source],
+        inputs,
     })
 }
 
@@ -320,33 +321,59 @@ fn fetch_listing(client: &Client, url: &str) -> Result<String> {
         .with_context(|| format!("failed to read listing from {url}"))
 }
 
-fn find_cdna_file(listing: &str, prefix: &str) -> Result<String> {
-    let regex = Regex::new(&format!(r#"href="({prefix}\.[^"]*cdna\.all\.fa\.gz)""#))?;
+fn find_gencode_transcripts_file(listing: &str, prefix: &str) -> Result<String> {
+    let regex = Regex::new(&format!(r#"href="(({prefix}M?\d+)\.transcripts\.fa\.gz)""#))?;
     regex
         .captures(listing)
         .and_then(|captures| captures.get(1))
         .map(|capture| capture.as_str().to_string())
-        .ok_or_else(|| anyhow!("could not find cdna.all file in Ensembl listing"))
+        .ok_or_else(|| anyhow!("could not find GENCODE transcripts FASTA in listing"))
 }
 
-fn find_gtf_file(listing: &str, prefix: &str) -> Result<String> {
-    let regex = Regex::new(&format!(r#"href="({prefix}\.[^"]*\.gtf\.gz)""#))?;
+fn find_gencode_gtf_file(listing: &str, prefix: &str) -> Result<String> {
+    let regex = Regex::new(&format!(r#"href="(({prefix}M?\d+)\.annotation\.gtf\.gz)""#))?;
     let candidate = regex
         .captures_iter(listing)
         .filter_map(|captures| captures.get(1).map(|capture| capture.as_str().to_string()))
         .find(|name| {
-            !name.contains(".chr.")
-                && !name.contains("abinitio")
+            !name.contains(".basic.")
+                && !name.contains(".primary_assembly.")
                 && !name.contains("chr_patch_hapl_scaff")
         });
-    candidate.ok_or_else(|| anyhow!("could not find canonical GTF file in Ensembl listing"))
+    candidate.ok_or_else(|| anyhow!("could not find canonical GENCODE annotation GTF in listing"))
 }
 
-fn extract_release_from_gtf(file_name: &str) -> Option<String> {
-    Regex::new(r"\.(\d+)\.gtf\.gz$")
+fn extract_gencode_release(file_name: &str) -> Option<String> {
+    Regex::new(r"(vM?\d+)")
         .ok()
         .and_then(|regex| regex.captures(file_name))
         .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()))
+}
+
+fn normalize_gencode_release(release: &str, preset: OrganismPreset) -> Result<Option<String>> {
+    if release.eq_ignore_ascii_case("latest") {
+        return Ok(None);
+    }
+    let trimmed = release.trim();
+    if trimmed.is_empty() {
+        bail!("reference release cannot be empty");
+    }
+    let normalized = if preset.key == "mouse" {
+        if trimmed.starts_with('M') || trimmed.starts_with("vM") {
+            trimmed.trim_start_matches('v').to_string()
+        } else {
+            format!("M{trimmed}")
+        }
+    } else if trimmed.starts_with('v') {
+        trimmed.to_string()
+    } else {
+        format!("v{trimmed}")
+    };
+    Ok(Some(normalized))
+}
+
+fn sanitize_release_id(release: &str) -> String {
+    release.replace('.', "_")
 }
 
 fn ensure_source_materialized(source: &SourceSpec, dest: &Path) -> Result<()> {
@@ -378,6 +405,8 @@ fn download_with_curl(url: &str, dest: &Path) -> Result<()> {
     let status = Command::new("curl")
         .arg("--fail")
         .arg("--location")
+        .arg("--silent")
+        .arg("--show-error")
         .arg("--continue-at")
         .arg("-")
         .arg("--retry")
@@ -427,16 +456,18 @@ fn build_annotation_tables(
         let _frame = fields.next();
         let attributes = fields.next().unwrap_or_default();
 
-        let Some(gene_id) = gene_re
-            .captures(attributes)
-            .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()))
-        else {
+        let Some(gene_id) = gene_re.captures(attributes).and_then(|captures| {
+            captures
+                .get(1)
+                .map(|value| normalize_stable_id(value.as_str()))
+        }) else {
             continue;
         };
-        if let Some(transcript_id) = transcript_re
-            .captures(attributes)
-            .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()))
-        {
+        if let Some(transcript_id) = transcript_re.captures(attributes).and_then(|captures| {
+            captures
+                .get(1)
+                .map(|value| normalize_stable_id(value.as_str()))
+        }) {
             tx2gene.insert((transcript_id, gene_id.clone()));
         }
 
@@ -476,6 +507,49 @@ fn build_annotation_tables(
     Ok(())
 }
 
+fn normalize_stable_id(value: &str) -> String {
+    value.split('.').next().unwrap_or(value).to_string()
+}
+
+fn annotation_tables_need_rebuild(
+    tx2gene_path: &Path,
+    gene_annotation_path: &Path,
+) -> Result<bool> {
+    Ok(table_contains_versioned_id(tx2gene_path, "transcript_id")?
+        || table_contains_versioned_id(tx2gene_path, "gene_id")?
+        || table_contains_versioned_id(gene_annotation_path, "gene_id")?)
+}
+
+fn table_contains_versioned_id(path: &Path, column: &str) -> Result<bool> {
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_path(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    let headers = reader
+        .headers()
+        .with_context(|| format!("failed to read header {}", path.display()))?
+        .clone();
+    let Some(index) = headers.iter().position(|name| name == column) else {
+        return Ok(true);
+    };
+    for row in reader.records().take(32) {
+        let row = row?;
+        let value = row.get(index).unwrap_or_default();
+        if value.is_empty() {
+            continue;
+        }
+        return Ok(is_versioned_stable_id(value));
+    }
+    Ok(false)
+}
+
+fn is_versioned_stable_id(value: &str) -> bool {
+    let mut parts = value.rsplitn(2, '.');
+    let suffix = parts.next().unwrap_or_default();
+    let prefix = parts.next().unwrap_or_default();
+    !prefix.is_empty() && !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+}
+
 fn manifest_artifact(kind: &str, path: &Path) -> Result<ManifestArtifact> {
     Ok(ManifestArtifact {
         kind: kind.to_string(),
@@ -491,24 +565,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_release_from_gtf_name() {
+    fn extracts_gencode_release_name() {
         assert_eq!(
-            extract_release_from_gtf("Homo_sapiens.GRCh38.115.gtf.gz").as_deref(),
-            Some("115")
+            extract_gencode_release("gencode.v49.annotation.gtf.gz").as_deref(),
+            Some("v49")
         );
     }
 
     #[test]
-    fn finds_cdna_and_gtf_from_listings() {
-        let cdna_listing = r#"<a href="Homo_sapiens.GRCh38.cdna.all.fa.gz">"#;
-        let gtf_listing = r#"<a href="Homo_sapiens.GRCh38.115.gtf.gz">"#;
+    fn finds_gencode_transcript_and_gtf_from_listings() {
+        let listing = r#"
+            <a href="gencode.v49.transcripts.fa.gz">
+            <a href="gencode.v49.annotation.gtf.gz">
+            <a href="gencode.v49.basic.annotation.gtf.gz">
+        "#;
         assert_eq!(
-            find_cdna_file(cdna_listing, "Homo_sapiens").unwrap(),
-            "Homo_sapiens.GRCh38.cdna.all.fa.gz"
+            find_gencode_transcripts_file(listing, "gencode.v").unwrap(),
+            "gencode.v49.transcripts.fa.gz"
         );
         assert_eq!(
-            find_gtf_file(gtf_listing, "Homo_sapiens").unwrap(),
-            "Homo_sapiens.GRCh38.115.gtf.gz"
+            find_gencode_gtf_file(listing, "gencode.v").unwrap(),
+            "gencode.v49.annotation.gtf.gz"
         );
+    }
+
+    #[test]
+    fn normalizes_requested_gencode_release() {
+        assert_eq!(
+            normalize_gencode_release("49", ORGANISM_PRESETS[0]).unwrap(),
+            Some("v49".to_string())
+        );
+        assert_eq!(
+            normalize_gencode_release("M38", ORGANISM_PRESETS[1]).unwrap(),
+            Some("M38".to_string())
+        );
+    }
+
+    #[test]
+    fn strips_versions_from_stable_ids() {
+        assert_eq!(normalize_stable_id("ENST00000335137.4"), "ENST00000335137");
+        assert_eq!(normalize_stable_id("ENSG00000186092.7"), "ENSG00000186092");
+        assert_eq!(normalize_stable_id("ENSG00000186092"), "ENSG00000186092");
     }
 }

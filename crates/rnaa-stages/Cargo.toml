@@ -12,6 +12,7 @@ fasterp.workspace = true
 flate2.workspace = true
 md-5.workspace = true
 mincorr.workspace = true
+rsfgsea.workspace = true
 nalgebra.workspace = true
 ndarray.workspace = true
 num_cpus.workspace = true

@@ -19,3 +19,6 @@ which.workspace = true
 rnaa-core = { path = "../rnaa-core" }
 rnaa-stages = { path = "../rnaa-stages" }
 rnaa-formats = { path = "../rnaa-formats" }
+
+[dev-dependencies]
+tempfile.workspace = true

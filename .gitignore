@@ -11,6 +11,7 @@
 /metadata/
 /trash/
 /exports/
+/data/
 /rnaa.toml
 *.sqlite
 *.sqlite-shm

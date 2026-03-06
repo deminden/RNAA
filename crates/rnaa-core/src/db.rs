@@ -535,8 +535,8 @@ impl Database {
                bytes_json = excluded.bytes_json,
                remote_files_json = excluded.remote_files_json,
                metadata_json = excluded.metadata_json,
-               state = excluded.state,
-               last_error = excluded.last_error,
+               state = runs.state,
+               last_error = runs.last_error,
                updated_at = excluded.updated_at",
             params![
                 run.project_id,
@@ -758,6 +758,44 @@ mod tests {
 
         let persisted = db.get_run("SRR1").unwrap().unwrap();
         assert_eq!(persisted.state, RunState::Verified);
+    }
+
+    #[test]
+    fn upsert_run_preserves_existing_state_for_resolve_refresh() {
+        let temp = TempDir::new().unwrap();
+        let config = ProjectConfig::default();
+        let db = Database::create(temp.path(), &config).unwrap();
+        let mut run = RunRecord {
+            project_id: db.project_id().to_string(),
+            study_accession: "SRP1".to_string(),
+            source_study_accession: Some("PRJNA1".to_string()),
+            run_accession: "SRR1".to_string(),
+            sample_accession: Some("SRS1".to_string()),
+            experiment_accession: Some("SRX1".to_string()),
+            library_layout: LibraryLayout::Paired,
+            instrument_platform: Some("ILLUMINA".to_string()),
+            instrument_model: Some("HiSeq".to_string()),
+            remote_files: vec![],
+            metadata: BTreeMap::from([("condition".to_string(), "A".to_string())]),
+            state: RunState::Resolved,
+            last_error: None,
+            updated_at: now_rfc3339(),
+        };
+        db.upsert_run(&run).unwrap();
+        db.set_run_state("SRR1", RunState::QuantDone, None).unwrap();
+
+        run.metadata
+            .insert("condition".to_string(), "B".to_string());
+        run.state = RunState::Resolved;
+        run.updated_at = now_rfc3339();
+        db.upsert_run(&run).unwrap();
+
+        let persisted = db.get_run("SRR1").unwrap().unwrap();
+        assert_eq!(persisted.state, RunState::QuantDone);
+        assert_eq!(
+            persisted.metadata.get("condition").map(String::as_str),
+            Some("B")
+        );
     }
 
     #[test]
