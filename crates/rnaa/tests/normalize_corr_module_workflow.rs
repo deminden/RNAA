@@ -211,8 +211,8 @@ fn normalize_then_corr_module_gmt_workflow() {
     let gmt_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
-        .join("data")
-        .join("Human_GO_AllPathways_noPFOCR_with_GO_iea_March_01_2024_symbol_renamed.gmt");
+        .join("fixtures")
+        .join("test_modules.gmt");
     assert!(
         gmt_path.exists(),
         "expected GMT file at {}",
