@@ -11,6 +11,9 @@ pub enum RunState {
     Downloading,
     Downloaded,
     Verified,
+    PreprocessRunning,
+    PreprocessDone,
+    PreprocessFailed,
     DownloadFailed,
     VerifyFailed,
     QuantRunning,
@@ -33,6 +36,9 @@ impl RunState {
             Self::Downloading => "DOWNLOADING",
             Self::Downloaded => "DOWNLOADED",
             Self::Verified => "VERIFIED",
+            Self::PreprocessRunning => "PREPROCESS_RUNNING",
+            Self::PreprocessDone => "PREPROCESS_DONE",
+            Self::PreprocessFailed => "PREPROCESS_FAILED",
             Self::DownloadFailed => "DOWNLOAD_FAILED",
             Self::VerifyFailed => "VERIFY_FAILED",
             Self::QuantRunning => "QUANT_RUNNING",
@@ -65,6 +71,9 @@ impl FromStr for RunState {
             "DOWNLOADING" => Ok(Self::Downloading),
             "DOWNLOADED" => Ok(Self::Downloaded),
             "VERIFIED" => Ok(Self::Verified),
+            "PREPROCESS_RUNNING" => Ok(Self::PreprocessRunning),
+            "PREPROCESS_DONE" => Ok(Self::PreprocessDone),
+            "PREPROCESS_FAILED" => Ok(Self::PreprocessFailed),
             "DOWNLOAD_FAILED" => Ok(Self::DownloadFailed),
             "VERIFY_FAILED" => Ok(Self::VerifyFailed),
             "QUANT_RUNNING" => Ok(Self::QuantRunning),
@@ -78,6 +87,45 @@ impl FromStr for RunState {
             "CORR_FAILED" => Ok(Self::CorrFailed),
             "CLEANED" => Ok(Self::Cleaned),
             _ => bail!("unknown run state: {value}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ProjectStageState {
+    Pending,
+    Running,
+    Done,
+    Failed,
+}
+
+impl ProjectStageState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "PENDING",
+            Self::Running => "RUNNING",
+            Self::Done => "DONE",
+            Self::Failed => "FAILED",
+        }
+    }
+}
+
+impl Display for ProjectStageState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ProjectStageState {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "PENDING" => Ok(Self::Pending),
+            "RUNNING" => Ok(Self::Running),
+            "DONE" => Ok(Self::Done),
+            "FAILED" => Ok(Self::Failed),
+            _ => bail!("unknown project stage state: {value}"),
         }
     }
 }

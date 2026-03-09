@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::config::MetadataMergeStrategy;
-use crate::state::RunState;
+use crate::state::{ProjectStageState, RunState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectRecord {
@@ -367,6 +367,15 @@ pub struct EventRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectStageRecord {
+    pub project_id: String,
+    pub stage: String,
+    pub state: ProjectStageState,
+    pub last_error: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContrastSpec {
     pub name: String,
     pub factor: String,
@@ -429,6 +438,31 @@ pub struct PreprocessArtifacts {
     pub passed_reads: usize,
     pub failed_reads: usize,
     pub reused: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreprocessQcRecord {
+    pub project_id: String,
+    pub run_accession: String,
+    pub report_path: String,
+    pub mode: String,
+    pub threads: u64,
+    pub total_reads_before: u64,
+    pub passed_reads: u64,
+    pub failed_reads: u64,
+    pub pass_rate: f64,
+    pub failed_rate: f64,
+    pub low_quality_reads: u64,
+    pub low_complexity_reads: u64,
+    pub too_many_n_reads: u64,
+    pub too_short_reads: u64,
+    pub duplicated_reads: u64,
+    pub duplication_rate: Option<f64>,
+    pub adapter_trimmed_reads: u64,
+    pub adapter_trimmed_bases: u64,
+    pub gate_passed: bool,
+    pub gate_reason: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

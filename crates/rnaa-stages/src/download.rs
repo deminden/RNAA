@@ -1,12 +1,16 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use reqwest::StatusCode;
+use reqwest::blocking::Client;
+use reqwest::header::RANGE;
 use rnaa_core::config::{DownloadMethod, DownloadPreference, ProjectConfig};
 use rnaa_core::db::Database;
 use rnaa_core::manifest::{ManifestArtifact, StageManifest};
@@ -24,12 +28,6 @@ use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, Default)]
 pub struct ShellDownloader;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DownloaderCommand {
-    binary: String,
-    args: Vec<String>,
-}
 
 impl ShellDownloader {
     pub fn run_worker(
@@ -190,14 +188,9 @@ impl ShellDownloader {
     }
 
     fn download_to_part(&self, method: DownloadMethod, url: &str, part_path: &Path) -> Result<()> {
-        let command = build_download_command(method, url, part_path);
-        let status = Command::new(&command.binary)
-            .args(&command.args)
-            .status()
-            .with_context(|| format!("failed to spawn {}", command.binary))?;
-        if !status.success() {
-            bail!("downloader exited with status {status}");
-        }
+        match method {
+            DownloadMethod::Reqwest => download_with_reqwest(url, part_path),
+        }?;
         Ok(())
     }
 }
@@ -292,14 +285,10 @@ impl Downloader for ShellDownloader {
                 "retries": config.download.retries,
                 "backoff_seconds": config.download.backoff_seconds,
             }),
-            tool_versions: BTreeMap::from_iter(
-                [
-                    ("curl".to_string(), rnaa_core::util::command_version("curl", &["--version"])),
-                    ("wget".to_string(), rnaa_core::util::command_version("wget", &["--version"])),
-                ]
-                .into_iter()
-                .filter_map(|(name, version)| version.map(|version| (name, version))),
-            ),
+            tool_versions: BTreeMap::from([(
+                "native_http".to_string(),
+                "reqwest-blocking".to_string(),
+            )]),
             input_artifacts: remote_files
                 .iter()
                 .map(|remote| ManifestArtifact {
@@ -330,38 +319,59 @@ impl Downloader for ShellDownloader {
     }
 }
 
-fn build_download_command(
-    method: DownloadMethod,
-    url: &str,
-    part_path: &Path,
-) -> DownloaderCommand {
-    match method {
-        DownloadMethod::Curl => DownloaderCommand {
-            binary: "curl".to_string(),
-            args: vec![
-                "--fail".to_string(),
-                "--location".to_string(),
-                "--silent".to_string(),
-                "--show-error".to_string(),
-                "--continue-at".to_string(),
-                "-".to_string(),
-                "--retry".to_string(),
-                "0".to_string(),
-                "--output".to_string(),
-                part_path.display().to_string(),
-                url.to_string(),
-            ],
-        },
-        DownloadMethod::Wget => DownloaderCommand {
-            binary: "wget".to_string(),
-            args: vec![
-                "-c".to_string(),
-                "-O".to_string(),
-                part_path.display().to_string(),
-                url.to_string(),
-            ],
-        },
+fn download_with_reqwest(url: &str, part_path: &Path) -> Result<()> {
+    if let Some(parent) = part_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
     }
+
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(None)
+        .build()
+        .context("failed to build reqwest client")?;
+
+    let existing_bytes = if part_path.exists() {
+        file_size(part_path)?
+    } else {
+        0
+    };
+
+    let mut request = client.get(url);
+    if existing_bytes > 0 {
+        request = request.header(RANGE, format!("bytes={existing_bytes}-"));
+    }
+
+    let mut response = request
+        .send()
+        .with_context(|| format!("failed to request {url}"))?;
+
+    if response.status() == StatusCode::RANGE_NOT_SATISFIABLE && existing_bytes > 0 {
+        return Ok(());
+    }
+
+    if !response.status().is_success() {
+        bail!(
+            "http download failed for {url} with status {}",
+            response.status()
+        );
+    }
+
+    let resume_supported = existing_bytes > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
+    let mut output = if resume_supported {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(part_path)
+            .with_context(|| format!("failed to open {} for append", part_path.display()))?
+    } else {
+        fs::File::create(part_path)
+            .with_context(|| format!("failed to create {}", part_path.display()))?
+    };
+
+    io::copy(&mut response, &mut output)
+        .with_context(|| format!("failed to write download body to {}", part_path.display()))?;
+    Ok(())
 }
 
 fn verify_existing_or_download(
@@ -445,6 +455,7 @@ fn verify_local_file(remote: &RemoteFile, path: &Path) -> Result<Option<Verified
 mod tests {
     use super::*;
     use rnaa_core::LibraryLayout;
+    use rnaa_core::config::ProjectConfig;
 
     #[test]
     fn remote_selection_prefers_fastq() {
@@ -492,29 +503,18 @@ mod tests {
     }
 
     #[test]
-    fn build_curl_command_template() {
-        let part_path = Path::new("/tmp/SRR1.fastq.gz.part");
-        let command = build_download_command(
-            DownloadMethod::Curl,
-            "https://example.com/a.fastq.gz",
-            part_path,
-        );
-        assert_eq!(command.binary, "curl");
-        assert_eq!(
-            command.args,
-            vec![
-                "--fail",
-                "--location",
-                "--silent",
-                "--show-error",
-                "--continue-at",
-                "-",
-                "--retry",
-                "0",
-                "--output",
-                "/tmp/SRR1.fastq.gz.part",
-                "https://example.com/a.fastq.gz",
-            ]
-        );
+    fn config_accepts_legacy_download_methods_as_reqwest() {
+        let config: ProjectConfig = toml::from_str(
+            r#"
+            [project]
+            name = "test"
+            schema_version = 1
+
+            [download]
+            method = "curl"
+            "#,
+        )
+        .expect("config should parse");
+        assert_eq!(config.download.method, DownloadMethod::Reqwest);
     }
 }

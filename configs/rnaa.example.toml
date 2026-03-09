@@ -28,7 +28,7 @@ concurrency = 2
 retries = 6
 backoff_seconds = [1, 2, 4, 8, 16, 32]
 prefer = "fastq"
-method = "curl"
+method = "reqwest"
 
 [refs]
 organism = "human"
@@ -44,11 +44,21 @@ engine = "r-kallisto"
 threads = 16
 workers = 0 # 0 = auto, otherwise fixed number of runs in parallel
 preprocess = false
+fastq_retention = "both" # both | original | trimmed | none
+preprocess_threads = 16
 preprocess_strict = true
 preprocess_max_input_mb = 1024
 cleanup = "none"
 trash_days = 7
 cleanup_on = "success"
+
+[quant.qc_gate]
+min_pass_rate = 0.6
+max_low_quality_rate = 0.3
+# max_low_complexity_rate = 0.2
+max_too_many_n_rate = 0.1
+max_too_short_rate = 0.4
+# max_duplication_rate = 0.9
 
 [deseq2]
 design = "~ batch + condition"

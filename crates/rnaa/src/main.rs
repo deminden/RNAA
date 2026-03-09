@@ -1,9 +1,8 @@
-use std::collections::VecDeque;
+use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,15 +11,17 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use regex::Regex;
-use rnaa_core::config::{CleanupMode, DownloadPreference, MetadataMergeStrategy, ProjectConfig};
+use rnaa_core::config::{
+    CleanupMode, DownloadPreference, FastqRetention, MetadataMergeStrategy, ProjectConfig,
+};
 use rnaa_core::model::{
     ArtifactKind, ArtifactRecord, ContrastSpec, CorrelationMethod, EventRecord, InputType,
-    OutputMode, QuantArtifacts, RemoteFile, RemoteFileKind, RunRecord, SharedBlobRecord,
-    VerifiedFile,
+    OutputMode, ProjectStageRecord, QuantArtifacts, RemoteFile, RemoteFileKind, RunRecord,
+    SharedBlobRecord, VerifiedFile,
 };
 use rnaa_core::paths::ProjectPaths;
 use rnaa_core::samplesheet::{load_or_init_column_map, write_samplesheet};
-use rnaa_core::state::RunState;
+use rnaa_core::state::{ProjectStageState, RunState};
 use rnaa_core::traits::{
     Correlator, DifferentialExpression, MatrixAdjuster, Preprocessor, Quantifier, ReferenceManager,
 };
@@ -112,6 +113,11 @@ fn run() -> Result<()> {
             let _log_guard = init_logging(&paths, "corr", log_file.as_deref())?;
             cmd_corr(&paths, &db, config, args)
         }
+        Commands::Qc(args) => {
+            let (paths, db, config) = open_project(&root)?;
+            let _log_guard = init_logging(&paths, "qc", log_file.as_deref())?;
+            cmd_qc(&paths, &db, &config, args)
+        }
         Commands::Run(args) => {
             let (paths, db, config) = open_project(&root)?;
             let _log_guard = init_logging(&paths, "run", log_file.as_deref())?;
@@ -150,6 +156,7 @@ enum Commands {
     Normalize(NormalizeArgs),
     Deseq2(Deseq2Args),
     Corr(CorrArgs),
+    Qc(QcArgs),
     Run(RunArgs),
     Status,
     Doctor,
@@ -241,6 +248,8 @@ struct QuantArgs {
     workers: Option<usize>,
     #[arg(long, default_value_t = false, conflicts_with = "no_preprocess")]
     preprocess: bool,
+    #[arg(long = "fastq-retention")]
+    fastq_retention: Option<String>,
     #[arg(long, default_value_t = false, conflicts_with = "preprocess")]
     no_preprocess: bool,
     #[arg(long, default_value_t = false, conflicts_with = "preprocess_bypass")]
@@ -249,6 +258,8 @@ struct QuantArgs {
     preprocess_bypass: bool,
     #[arg(long = "preprocess-max-mb")]
     preprocess_max_mb: Option<usize>,
+    #[arg(long = "preprocess-threads")]
+    preprocess_threads: Option<usize>,
     #[arg(long)]
     cleanup: Option<String>,
     #[arg(long = "trash-days")]
@@ -296,11 +307,29 @@ struct CorrArgs {
 }
 
 #[derive(Args, Debug)]
+struct QcArgs {
+    #[command(subcommand)]
+    command: QcCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum QcCommand {
+    Reevaluate(QcReevaluateArgs),
+}
+
+#[derive(Args, Debug)]
+struct QcReevaluateArgs {}
+
+#[derive(Args, Debug)]
 struct RunArgs {
     #[arg(long, default_value_t = false)]
     no_download: bool,
     #[arg(long, default_value_t = false)]
     no_corr: bool,
+    #[arg(long = "fastq-retention")]
+    fastq_retention: Option<String>,
+    #[arg(long = "preprocess-threads")]
+    preprocess_threads: Option<usize>,
 }
 
 #[derive(Args, Debug)]
@@ -441,6 +470,7 @@ fn cmd_resolve(
 }
 
 fn cmd_status(paths: &ProjectPaths, db: &Database, config: &ProjectConfig) -> Result<()> {
+    recover_interrupted_work(db)?;
     let project = db.project()?;
     let counts = db.state_counts()?;
     let inputs = db.list_inputs()?;
@@ -449,7 +479,14 @@ fn cmd_status(paths: &ProjectPaths, db: &Database, config: &ProjectConfig) -> Re
     let runs = db.list_runs()?;
     let artifacts = db.list_artifacts()?;
     let events = db.list_events(10_000)?;
-    let progress = compute_progress_snapshot(&runs, &artifacts, &events, config);
+    let stages = db.list_project_stage_states()?;
+    let progress = compute_progress_snapshot(&runs, &artifacts, &events, &stages, config);
+    let preprocess_qc = db.list_preprocess_qc()?;
+    let qc_failed = preprocess_qc
+        .iter()
+        .filter(|record| !record.gate_passed)
+        .count();
+    let qc_skipped = qc_failed;
 
     println!("project_id\t{}", project.project_id);
     println!("root\t{}", project.root_dir);
@@ -467,6 +504,19 @@ fn cmd_status(paths: &ProjectPaths, db: &Database, config: &ProjectConfig) -> Re
         progress.total_runs,
         ratio_pct(progress.download_done, progress.total_runs)
     );
+    if progress.preprocess_enabled {
+        println!(
+            "progress_preprocess\t{}/{} ({:.1}%)",
+            progress.preprocess_done,
+            progress.total_runs,
+            ratio_pct(progress.preprocess_done, progress.total_runs)
+        );
+    } else {
+        println!("progress_preprocess\toff");
+    }
+    println!("preprocess_qc_records\t{}", preprocess_qc.len());
+    println!("preprocess_qc_failed\t{}", qc_failed);
+    println!("runs_skipped_qc\t{}", qc_skipped);
     println!(
         "progress_quant\t{}/{} ({:.1}%)",
         progress.quant_done,
@@ -549,7 +599,8 @@ fn cmd_doctor(paths: &ProjectPaths, project: Option<&ProjectRecord>) -> Result<(
     }
     println!("root\t{}", paths.root.display());
 
-    for binary in ["curl", "wget", "Rscript", "kallisto", "xsra", "mincorr"] {
+    println!("tool\tnative_http\tOK\treqwest");
+    for binary in ["Rscript", "kallisto", "xsra", "mincorr"] {
         match which::which(binary) {
             Ok(path) => println!("tool\t{binary}\tOK\t{}", path.display()),
             Err(_) => println!("tool\t{binary}\tMISSING"),
@@ -593,6 +644,7 @@ fn cmd_download(
     config: ProjectConfig,
     args: DownloadArgs,
 ) -> Result<()> {
+    recover_interrupted_work(&db)?;
     let downloader = ShellDownloader;
     let prefer = args
         .prefer
@@ -725,6 +777,7 @@ fn cmd_quant(
     mut config: ProjectConfig,
     args: QuantArgs,
 ) -> Result<()> {
+    recover_interrupted_work(db)?;
     if let Some(engine) = args.engine {
         config.quant.engine = engine;
         config.save(&paths.config_path)?;
@@ -748,6 +801,11 @@ fn cmd_quant(
         config.save(&paths.config_path)?;
         db.set_project_config(&config)?;
     }
+    if let Some(fastq_retention) = args.fastq_retention {
+        config.quant.fastq_retention = parse_fastq_retention(&fastq_retention)?;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
     if args.no_preprocess {
         config.quant.preprocess = false;
         config.save(&paths.config_path)?;
@@ -768,6 +826,14 @@ fn cmd_quant(
         config.save(&paths.config_path)?;
         db.set_project_config(&config)?;
     }
+    if let Some(preprocess_threads) = args.preprocess_threads {
+        if preprocess_threads == 0 {
+            bail!("--preprocess-threads must be >= 1");
+        }
+        config.quant.preprocess_threads = preprocess_threads;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
     if let Some(cleanup) = args.cleanup {
         config.quant.cleanup = parse_cleanup_mode(&cleanup)?;
         config.save(&paths.config_path)?;
@@ -781,68 +847,37 @@ fn cmd_quant(
 
     let reference = EnsemblReferenceManager::new()?.ensure_reference(paths, &config)?;
     reconcile_quant_state(db, paths, &config, &reference)?;
-    let runs = db.list_runs_in_states(&[RunState::Verified, RunState::QuantFailed])?;
-    if runs.is_empty() {
-        println!("quant\tno_verified_runs");
+    let scheduler = resolve_scheduler_budget(&config);
+    let mut state = QuantSchedulerState::default();
+    let did_work = run_quant_scheduler_until_idle(
+        paths, db, &config, &reference, &scheduler, &mut state, false,
+    )?;
+    if !did_work {
+        println!("quant\tno_ready_runs");
         return Ok(());
     }
-    let worker_count = resolve_quant_worker_count(&config, runs.len());
-    let mut completed = 0_u64;
-    let mut failed = 0_u64;
-    if worker_count <= 1 {
-        for run in runs {
-            if process_quant_run(db, paths, &config, &reference, run)? {
-                completed += 1;
-            } else {
-                failed += 1;
-            }
-        }
-    } else {
-        println!("quant_workers\t{}", worker_count);
-        let queue = Arc::new(Mutex::new(VecDeque::from(runs)));
-        let (tx, rx) = mpsc::channel::<Result<bool>>();
-        let mut handles = Vec::new();
 
-        for _ in 0..worker_count {
-            let db = db.clone();
-            let paths = paths.clone();
-            let config = config.clone();
-            let reference = reference.clone();
-            let queue = Arc::clone(&queue);
-            let tx = tx.clone();
-            handles.push(thread::spawn(move || {
-                loop {
-                    let maybe_run = {
-                        let mut guard = queue.lock().expect("quant queue mutex poisoned");
-                        guard.pop_front()
-                    };
-                    let Some(run) = maybe_run else {
-                        break;
-                    };
-                    let result = process_quant_run(&db, &paths, &config, &reference, run);
-                    let _ = tx.send(result);
-                }
-            }));
-        }
-        drop(tx);
-
-        for result in rx {
-            match result {
-                Ok(true) => completed += 1,
-                Ok(false) => failed += 1,
-                Err(err) => {
-                    failed += 1;
-                    tracing::error!("quant worker failed: {err:#}");
-                }
-            }
-        }
-        for handle in handles {
-            if let Err(err) = handle.join() {
-                bail!("quant worker thread panicked: {err:?}");
-            }
-        }
-    }
-
+    let tracked = state
+        .attempted_preprocess
+        .union(&state.attempted_quant)
+        .cloned()
+        .collect::<HashSet<_>>();
+    let runs = db.list_runs()?;
+    let completed = runs
+        .iter()
+        .filter(|run| tracked.contains(&run.run_accession) && is_quant_done_state(run.state))
+        .count() as u64;
+    let failed = runs
+        .iter()
+        .filter(|run| {
+            tracked.contains(&run.run_accession)
+                && matches!(
+                    run.state,
+                    RunState::PreprocessFailed | RunState::QuantFailed
+                )
+        })
+        .count() as u64;
+    println!("quant_workers\t{}", scheduler.quant_workers);
     println!("quant_completed\t{}", completed);
     println!("quant_failed\t{}", failed);
     Ok(())
@@ -854,19 +889,17 @@ fn process_quant_run(
     config: &ProjectConfig,
     reference: &rnaa_core::model::ReferenceBundle,
     run: RunRecord,
+    allow_preprocess: bool,
 ) -> Result<bool> {
     let quantifier = RKallistoQuantifier;
-    let preprocessor = FasterpInProcessPreprocessor;
 
-    if !config.quant.preprocess
-        && let Some(artifacts) = reconcile_quant_artifacts(&run, reference, paths, config)?
-    {
+    if let Some(artifacts) = reconcile_quant_artifacts(&run, reference, paths, config)? {
         finalize_quant_success(
             db,
             config,
             &run.run_accession,
             artifacts,
-            false,
+            config.quant.preprocess,
             "quantification reused from existing outputs",
         )?;
         return Ok(true);
@@ -885,8 +918,19 @@ fn process_quant_run(
             "preprocess_strict": config.quant.preprocess_strict
         }),
     )?;
-    let raw_fastqs = load_fastq_artifacts(db, &run.run_accession)?;
-    if raw_fastqs.is_empty() {
+    let quant_fastqs = if config.quant.preprocess {
+        let existing_trimmed = load_trimmed_fastq_artifacts(db, &run.run_accession)?;
+        if existing_trimmed.is_empty() && allow_preprocess {
+            let preprocessed = process_preprocess_run(db, paths, config, run.clone())?;
+            if !preprocessed {
+                return Ok(false);
+            }
+        }
+        load_quant_input_fastqs(db, &run.run_accession, true)?
+    } else {
+        load_raw_fastq_artifacts(db, &run.run_accession)?
+    };
+    if quant_fastqs.is_empty() {
         let message = format!("no FASTQ artifacts found for {}", run.run_accession);
         db.set_run_state(&run.run_accession, RunState::QuantFailed, Some(&message))?;
         db.append_event(
@@ -896,78 +940,6 @@ fn process_quant_run(
             serde_json::json!({ "error": message }),
         )?;
         return Ok(false);
-    }
-
-    let mut quant_fastqs = raw_fastqs.clone();
-    if config.quant.preprocess {
-        match preprocessor.preprocess(&run, &raw_fastqs, paths, config) {
-            Ok(preprocessed) => {
-                for item in &preprocessed.fastqs {
-                    db.record_artifact(&ArtifactRecord {
-                        project_id: db.project_id().to_string(),
-                        run_accession: Some(run.run_accession.clone()),
-                        kind: item.artifact_kind,
-                        path: item.path.display().to_string(),
-                        blob_id: None,
-                        shared_path: None,
-                        checksum_type: item.checksum_type.clone(),
-                        checksum: item.checksum.clone(),
-                        bytes: item.bytes,
-                        created_at: now_rfc3339(),
-                    })?;
-                }
-                db.record_artifact(&ArtifactRecord {
-                    project_id: db.project_id().to_string(),
-                    run_accession: Some(run.run_accession.clone()),
-                    kind: ArtifactKind::PreprocessReport,
-                    path: preprocessed.report_json.display().to_string(),
-                    blob_id: None,
-                    shared_path: None,
-                    checksum_type: "sha256".to_string(),
-                    checksum: compute_sha256(&preprocessed.report_json)?,
-                    bytes: file_size(&preprocessed.report_json)?,
-                    created_at: now_rfc3339(),
-                })?;
-                db.append_event(
-                    "quant",
-                    Some(&run.run_accession),
-                    "preprocessing completed",
-                    serde_json::json!({
-                        "tool": preprocessed.tool_name,
-                        "version": preprocessed.tool_version,
-                        "reused": preprocessed.reused,
-                        "passed_reads": preprocessed.passed_reads,
-                        "failed_reads": preprocessed.failed_reads,
-                        "report_json": preprocessed.report_json.display().to_string(),
-                        "outputs": preprocessed
-                            .fastqs
-                            .iter()
-                            .map(|item| item.path.display().to_string())
-                            .collect::<Vec<_>>()
-                    }),
-                )?;
-                quant_fastqs = preprocessed.fastqs;
-            }
-            Err(err) if !config.quant.preprocess_strict => {
-                db.append_event(
-                    "quant",
-                    Some(&run.run_accession),
-                    "preprocessing failed; using raw FASTQ",
-                    serde_json::json!({ "error": format!("{err:#}") }),
-                )?;
-            }
-            Err(err) => {
-                let message = format!("{err:#}");
-                db.set_run_state(&run.run_accession, RunState::QuantFailed, Some(&message))?;
-                db.append_event(
-                    "quant",
-                    Some(&run.run_accession),
-                    "quantification failed",
-                    serde_json::json!({ "error": message }),
-                )?;
-                return Ok(false);
-            }
-        }
     }
 
     match quantifier.quantify(&run, &quant_fastqs, reference, paths, config) {
@@ -980,6 +952,7 @@ fn process_quant_run(
                 config.quant.preprocess,
                 "quantification completed",
             )?;
+            apply_fastq_retention(db, paths, config, &run.run_accession)?;
             Ok(true)
         }
         Err(err) => {
@@ -996,18 +969,155 @@ fn process_quant_run(
     }
 }
 
+fn process_preprocess_run(
+    db: &Database,
+    paths: &ProjectPaths,
+    config: &ProjectConfig,
+    run: RunRecord,
+) -> Result<bool> {
+    let preprocessor = FasterpInProcessPreprocessor;
+    let raw_fastqs = load_raw_fastq_artifacts(db, &run.run_accession)?;
+    if raw_fastqs.is_empty() {
+        let message = format!("no FASTQ artifacts found for {}", run.run_accession);
+        db.set_run_state(
+            &run.run_accession,
+            RunState::PreprocessFailed,
+            Some(&message),
+        )?;
+        db.append_event(
+            "preprocess",
+            Some(&run.run_accession),
+            "preprocessing failed",
+            serde_json::json!({ "error": message }),
+        )?;
+        return Ok(false);
+    }
+
+    db.set_run_state(&run.run_accession, RunState::PreprocessRunning, None)?;
+    db.append_event(
+        "preprocess",
+        Some(&run.run_accession),
+        "preprocessing started",
+        serde_json::json!({
+            "strict": config.quant.preprocess_strict,
+            "max_input_mb": config.quant.preprocess_max_input_mb,
+            "threads": config.quant.preprocess_threads
+        }),
+    )?;
+
+    match preprocessor.preprocess(&run, &raw_fastqs, paths, config) {
+        Ok(preprocessed) => {
+            record_preprocess_success(db, config, &run.run_accession, &preprocessed)
+        }
+        Err(err) if !config.quant.preprocess_strict => {
+            db.set_run_state(&run.run_accession, RunState::PreprocessDone, None)?;
+            db.append_event(
+                "preprocess",
+                Some(&run.run_accession),
+                "preprocessing bypassed; using raw FASTQ",
+                serde_json::json!({ "error": format!("{err:#}") }),
+            )?;
+            Ok(true)
+        }
+        Err(err) => {
+            let message = format!("{err:#}");
+            db.set_run_state(
+                &run.run_accession,
+                RunState::PreprocessFailed,
+                Some(&message),
+            )?;
+            db.append_event(
+                "preprocess",
+                Some(&run.run_accession),
+                "preprocessing failed",
+                serde_json::json!({ "error": message }),
+            )?;
+            Ok(false)
+        }
+    }
+}
+
+fn record_preprocess_success(
+    db: &Database,
+    config: &ProjectConfig,
+    run_accession: &str,
+    preprocessed: &rnaa_core::PreprocessArtifacts,
+) -> Result<bool> {
+    for item in &preprocessed.fastqs {
+        db.record_artifact(&ArtifactRecord {
+            project_id: db.project_id().to_string(),
+            run_accession: Some(run_accession.to_string()),
+            kind: item.artifact_kind,
+            path: item.path.display().to_string(),
+            blob_id: None,
+            shared_path: None,
+            checksum_type: item.checksum_type.clone(),
+            checksum: item.checksum.clone(),
+            bytes: item.bytes,
+            created_at: now_rfc3339(),
+        })?;
+    }
+    db.record_artifact(&ArtifactRecord {
+        project_id: db.project_id().to_string(),
+        run_accession: Some(run_accession.to_string()),
+        kind: ArtifactKind::PreprocessReport,
+        path: preprocessed.report_json.display().to_string(),
+        blob_id: None,
+        shared_path: None,
+        checksum_type: "sha256".to_string(),
+        checksum: compute_sha256(&preprocessed.report_json)?,
+        bytes: file_size(&preprocessed.report_json)?,
+        created_at: now_rfc3339(),
+    })?;
+    let qc = parse_preprocess_qc_report(
+        db.project_id(),
+        run_accession,
+        &preprocessed.report_json,
+        &config.quant.qc_gate,
+    )?;
+    db.record_preprocess_qc(&qc)?;
+    let next_state = if qc.gate_passed {
+        RunState::PreprocessDone
+    } else {
+        RunState::PreprocessFailed
+    };
+    db.set_run_state(run_accession, next_state, qc.gate_reason.as_deref())?;
+    db.append_event(
+        "preprocess",
+        Some(run_accession),
+        if qc.gate_passed {
+            "preprocessing completed"
+        } else {
+            "preprocessing rejected by QC gate"
+        },
+        serde_json::json!({
+            "tool": preprocessed.tool_name,
+            "version": preprocessed.tool_version,
+            "reused": preprocessed.reused,
+            "passed_reads": preprocessed.passed_reads,
+            "failed_reads": preprocessed.failed_reads,
+            "report_json": preprocessed.report_json.display().to_string(),
+            "qc_gate_passed": qc.gate_passed,
+            "qc_gate_reason": qc.gate_reason,
+            "outputs": preprocessed
+                .fastqs
+                .iter()
+                .map(|item| item.path.display().to_string())
+                .collect::<Vec<_>>()
+        }),
+    )?;
+    Ok(qc.gate_passed)
+}
+
 fn reconcile_quant_state(
     db: &Database,
     paths: &ProjectPaths,
     config: &ProjectConfig,
     reference: &rnaa_core::model::ReferenceBundle,
 ) -> Result<()> {
-    if config.quant.preprocess {
-        return Ok(());
-    }
-
     let runs = db.list_runs_in_states(&[
         RunState::Verified,
+        RunState::PreprocessDone,
         RunState::QuantRunning,
         RunState::QuantFailed,
     ])?;
@@ -1117,30 +1227,13 @@ fn finalize_quant_success(
     Ok(())
 }
 
-fn resolve_quant_worker_count(config: &ProjectConfig, runs_total: usize) -> usize {
-    if runs_total == 0 {
-        return 1;
-    }
-    let per_run_threads = config.quant.threads.max(1);
-    let auto = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
-        .saturating_div(per_run_threads)
-        .max(1);
-    let requested = if config.quant.workers == 0 {
-        auto
-    } else {
-        config.quant.workers
-    };
-    requested.max(1).min(runs_total)
-}
-
 fn cmd_deseq2(
     paths: &ProjectPaths,
     db: &Database,
     config: ProjectConfig,
     args: Deseq2Args,
 ) -> Result<()> {
+    recover_interrupted_work(db)?;
     let contrasts = if args.contrast.is_empty() {
         db.list_contrasts()?
     } else {
@@ -1157,6 +1250,7 @@ fn cmd_normalize(
     config: ProjectConfig,
     args: NormalizeArgs,
 ) -> Result<()> {
+    recover_interrupted_work(db)?;
     let (outputs, recorded) = run_deseq2_stage(
         paths,
         db,
@@ -1180,6 +1274,7 @@ fn run_deseq2_stage(
     stage_name: &str,
     store_contrasts: bool,
 ) -> Result<(u64, u64)> {
+    db.set_project_stage_state(stage_name, ProjectStageState::Pending, None)?;
     let runs = db.list_runs_in_states(&[
         RunState::QuantDone,
         RunState::DeRunning,
@@ -1247,6 +1342,7 @@ fn run_deseq2_stage(
     for run_accession in &target_runs {
         db.set_run_state(run_accession, RunState::DeRunning, None)?;
     }
+    db.set_project_stage_state(stage_name, ProjectStageState::Running, None)?;
     db.append_event(
         stage_name,
         None,
@@ -1272,6 +1368,7 @@ fn run_deseq2_stage(
             for run_accession in &target_runs {
                 db.set_run_state(run_accession, RunState::DeFailed, Some(&message))?;
             }
+            db.set_project_stage_state(stage_name, ProjectStageState::Failed, Some(&message))?;
             db.append_event(
                 stage_name,
                 None,
@@ -1316,6 +1413,7 @@ fn run_deseq2_stage(
     recorded += 1;
 
     mark_runs_de_done(db, &runs)?;
+    db.set_project_stage_state(stage_name, ProjectStageState::Done, None)?;
     db.append_event(
         stage_name,
         None,
@@ -1430,6 +1528,11 @@ fn reconcile_deseq2_stage(
     let mut recorded = register_deseq2_outputs(db, &outputs)?;
     recorded += register_single_artifact(db, ArtifactKind::Manifest, request_manifest_path)?;
     mark_runs_de_done(db, runs)?;
+    db.set_project_stage_state(
+        expected["stage"].as_str().unwrap_or("deseq2"),
+        ProjectStageState::Done,
+        None,
+    )?;
     db.append_event(
         expected["stage"].as_str().unwrap_or("deseq2"),
         None,
@@ -1794,6 +1897,7 @@ fn reconcile_corr_stage(
     for run in runs {
         db.set_run_state(&run.run_accession, RunState::CorrDone, None)?;
     }
+    db.set_project_stage_state("corr", ProjectStageState::Done, None)?;
     db.append_event(
         "corr",
         None,
@@ -1813,6 +1917,8 @@ fn cmd_corr(
     mut config: ProjectConfig,
     args: CorrArgs,
 ) -> Result<()> {
+    recover_interrupted_work(db)?;
+    db.set_project_stage_state("corr", ProjectStageState::Pending, None)?;
     if let Some(adjust) = &args.adjust {
         config.corr.adjust = adjust.clone();
     }
@@ -1883,6 +1989,7 @@ fn cmd_corr(
     for run in &runs {
         db.set_run_state(&run.run_accession, RunState::CorrRunning, None)?;
     }
+    db.set_project_stage_state("corr", ProjectStageState::Running, None)?;
     db.append_event(
         "corr",
         None,
@@ -1915,6 +2022,7 @@ fn cmd_corr(
                 for run in &runs {
                     db.set_run_state(&run.run_accession, RunState::CorrFailed, Some(&message))?;
                 }
+                db.set_project_stage_state("corr", ProjectStageState::Failed, Some(&message))?;
                 db.append_event(
                     "corr",
                     None,
@@ -1996,6 +2104,7 @@ fn cmd_corr(
     for run in &runs {
         db.set_run_state(&run.run_accession, RunState::CorrDone, None)?;
     }
+    db.set_project_stage_state("corr", ProjectStageState::Done, None)?;
     db.append_event(
         "corr",
         None,
@@ -2008,27 +2117,156 @@ fn cmd_corr(
     Ok(())
 }
 
+fn cmd_qc(paths: &ProjectPaths, db: &Database, config: &ProjectConfig, args: QcArgs) -> Result<()> {
+    match args.command {
+        QcCommand::Reevaluate(args) => cmd_qc_reevaluate(paths, db, config, args),
+    }
+}
+
+fn cmd_qc_reevaluate(
+    _paths: &ProjectPaths,
+    db: &Database,
+    config: &ProjectConfig,
+    _args: QcReevaluateArgs,
+) -> Result<()> {
+    recover_interrupted_work(db)?;
+    let runs = db.list_runs()?;
+    let mut reevaluated = 0_u64;
+    let mut qc_passed = 0_u64;
+    let mut qc_failed = 0_u64;
+    let mut states_changed = 0_u64;
+    let mut gate_outcome_changed = 0_u64;
+    let mut missing_reports = 0_u64;
+    let mut project_outputs_invalidated = false;
+
+    for run in runs {
+        let artifacts = db.list_artifacts_for_run(Some(&run.run_accession))?;
+        let Some(report_path) = select_preprocess_report_path(db, &run.run_accession, &artifacts)
+        else {
+            missing_reports += 1;
+            continue;
+        };
+        if !report_path.exists() {
+            missing_reports += 1;
+            continue;
+        }
+
+        let previous_qc = db.get_preprocess_qc(&run.run_accession)?;
+        let qc = parse_preprocess_qc_report(
+            db.project_id(),
+            &run.run_accession,
+            &report_path,
+            &config.quant.qc_gate,
+        )?;
+        db.record_preprocess_qc(&qc)?;
+        reevaluated += 1;
+        if qc.gate_passed {
+            qc_passed += 1;
+        } else {
+            qc_failed += 1;
+        }
+
+        let gate_changed = previous_qc.as_ref().is_none_or(|previous| {
+            previous.gate_passed != qc.gate_passed || previous.gate_reason != qc.gate_reason
+        });
+        let desired_state = if gate_changed {
+            desired_run_state_after_qc_reevaluation(&artifacts, qc.gate_passed)
+        } else {
+            run.state
+        };
+        let desired_error = if gate_changed && !qc.gate_passed {
+            qc.gate_reason.as_deref()
+        } else {
+            run.last_error.as_deref()
+        };
+
+        if gate_changed {
+            gate_outcome_changed += 1;
+            let previous_passed = previous_qc
+                .as_ref()
+                .is_some_and(|previous| previous.gate_passed);
+            if previous_qc.is_none() || previous_passed != qc.gate_passed {
+                project_outputs_invalidated = true;
+            }
+            db.append_event(
+                "qc",
+                Some(&run.run_accession),
+                "preprocess QC reevaluated",
+                json!({
+                    "report_path": report_path.display().to_string(),
+                    "gate_passed": qc.gate_passed,
+                    "gate_reason": qc.gate_reason,
+                    "previous_gate_passed": previous_qc.as_ref().map(|item| item.gate_passed),
+                    "previous_gate_reason": previous_qc.as_ref().and_then(|item| item.gate_reason.clone()),
+                    "state_before": run.state.as_str(),
+                    "state_after": desired_state.as_str(),
+                }),
+            )?;
+        }
+
+        if desired_state != run.state || desired_error != run.last_error.as_deref() {
+            db.set_run_state(&run.run_accession, desired_state, desired_error)?;
+            states_changed += 1;
+        }
+    }
+
+    if project_outputs_invalidated {
+        let reason = "preprocess QC gate outcome changed; rerun normalize/corr";
+        for stage_name in ["normalize", "deseq2", "corr"] {
+            if db.get_project_stage_state(stage_name)?.is_some() {
+                db.set_project_stage_state(stage_name, ProjectStageState::Pending, Some(reason))?;
+            }
+        }
+        db.append_event(
+            "qc",
+            None,
+            "project-level outputs invalidated by preprocess QC reevaluation",
+            json!({ "reason": reason }),
+        )?;
+    }
+
+    println!("qc_reevaluated\t{reevaluated}");
+    println!("qc_passed\t{qc_passed}");
+    println!("qc_failed\t{qc_failed}");
+    println!("qc_state_changes\t{states_changed}");
+    println!("qc_gate_outcome_changed\t{gate_outcome_changed}");
+    println!("qc_missing_reports\t{missing_reports}");
+    println!(
+        "project_outputs_invalidated\t{}",
+        if project_outputs_invalidated {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    Ok(())
+}
+
 fn cmd_run(
     paths: &ProjectPaths,
     db: &Database,
-    config: ProjectConfig,
+    mut config: ProjectConfig,
     args: RunArgs,
 ) -> Result<()> {
+    if let Some(fastq_retention) = args.fastq_retention {
+        config.quant.fastq_retention = parse_fastq_retention(&fastq_retention)?;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
+    if let Some(preprocess_threads) = args.preprocess_threads {
+        if preprocess_threads == 0 {
+            bail!("--preprocess-threads must be >= 1");
+        }
+        config.quant.preprocess_threads = preprocess_threads;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
+    recover_interrupted_work(db)?;
     cmd_resolve(paths, db, &config, ResolveArgs { force: false })?;
-    let quant_args = QuantArgs {
-        engine: None,
-        threads: None,
-        workers: None,
-        preprocess: false,
-        no_preprocess: false,
-        preprocess_strict: false,
-        preprocess_bypass: false,
-        preprocess_max_mb: None,
-        cleanup: None,
-        trash_days: None,
-    };
+    let reference = EnsemblReferenceManager::new()?.ensure_reference(paths, &config)?;
+    reconcile_quant_state(db, paths, &config, &reference)?;
+    let scheduler = resolve_scheduler_budget(&config);
 
-    // Pipeline mode: run download and quant together so verified runs are consumed immediately.
     let mut download_handle = if args.no_download {
         None
     } else {
@@ -2041,13 +2279,14 @@ fn cmd_run(
                 db_for_download,
                 paths_for_download,
                 config_for_download.clone(),
-                config_for_download.download.concurrency,
+                scheduler.download_workers,
                 false,
                 None,
             )
         }))
     };
 
+    let mut scheduler_state = QuantSchedulerState::default();
     let started_at = std::time::Instant::now();
     let mut last_progress = started_at;
     let mut last_progress_snapshot = None;
@@ -2055,6 +2294,7 @@ fn cmd_run(
         paths,
         db,
         &config,
+        &scheduler,
         started_at.elapsed(),
         &mut last_progress_snapshot,
     )?;
@@ -2065,25 +2305,21 @@ fn cmd_run(
                 paths,
                 db,
                 &config,
+                &scheduler,
                 started_at.elapsed(),
                 &mut last_progress_snapshot,
             )?;
             last_progress = std::time::Instant::now();
         }
-        let quant_ready = db.list_runs_in_states(&[RunState::Verified, RunState::QuantFailed])?;
-        let mut did_work = false;
-        if !quant_ready.is_empty() {
-            cmd_quant(paths, db, config.clone(), quant_args.clone())?;
-            last_progress = std::time::Instant::now();
-            print_run_progress(
-                paths,
-                db,
-                &config,
-                started_at.elapsed(),
-                &mut last_progress_snapshot,
-            )?;
-            did_work = true;
-        }
+        let mut did_work = run_quant_scheduler_until_idle(
+            paths,
+            db,
+            &config,
+            &reference,
+            &scheduler,
+            &mut scheduler_state,
+            true,
+        )?;
 
         if let Some(handle) = &download_handle
             && handle.is_finished()
@@ -2099,6 +2335,7 @@ fn cmd_run(
                 paths,
                 db,
                 &config,
+                &scheduler,
                 started_at.elapsed(),
                 &mut last_progress_snapshot,
             )?;
@@ -2110,11 +2347,10 @@ fn cmd_run(
         } else {
             has_pending_download_runs(db)?
         };
-        let pending_quant = !db
-            .list_runs_in_states(&[RunState::Verified, RunState::QuantFailed])?
-            .is_empty();
-
-        if download_handle.is_none() && !pending_download && !pending_quant {
+        if download_handle.is_none()
+            && quant_scheduler_is_idle(db, &config, &scheduler_state)?
+            && !pending_download
+        {
             break;
         }
         if !did_work {
@@ -2155,6 +2391,7 @@ fn cmd_run(
         paths,
         db,
         &config,
+        &scheduler,
         started_at.elapsed(),
         &mut last_progress_snapshot,
     )?;
@@ -2162,17 +2399,229 @@ fn cmd_run(
     Ok(())
 }
 
+#[derive(Default)]
+struct QuantSchedulerState {
+    preprocess_tasks: Vec<thread::JoinHandle<Result<()>>>,
+    quant_tasks: Vec<thread::JoinHandle<Result<()>>>,
+    attempted_preprocess: HashSet<String>,
+    attempted_quant: HashSet<String>,
+}
+
+fn run_quant_scheduler_until_idle(
+    paths: &ProjectPaths,
+    db: &Database,
+    config: &ProjectConfig,
+    reference: &rnaa_core::ReferenceBundle,
+    scheduler: &SchedulerBudget,
+    state: &mut QuantSchedulerState,
+    stop_on_idle: bool,
+) -> Result<bool> {
+    let mut did_any_work = false;
+    loop {
+        let did_work = schedule_quant_iteration(paths, db, config, reference, scheduler, state)?;
+        did_any_work |= did_work;
+        if stop_on_idle {
+            break;
+        }
+        if quant_scheduler_is_idle(db, config, state)? {
+            break;
+        }
+        if !did_work {
+            thread::sleep(Duration::from_millis(200));
+        }
+    }
+    Ok(did_any_work)
+}
+
+fn schedule_quant_iteration(
+    paths: &ProjectPaths,
+    db: &Database,
+    config: &ProjectConfig,
+    reference: &rnaa_core::ReferenceBundle,
+    scheduler: &SchedulerBudget,
+    state: &mut QuantSchedulerState,
+) -> Result<bool> {
+    reap_finished_tasks(&mut state.preprocess_tasks)?;
+    reap_finished_tasks(&mut state.quant_tasks)?;
+
+    let runs = db.list_runs()?;
+    let mut preprocess_running = runs
+        .iter()
+        .filter(|run| matches!(run.state, RunState::PreprocessRunning))
+        .count();
+    let mut quant_running = runs
+        .iter()
+        .filter(|run| matches!(run.state, RunState::QuantRunning))
+        .count();
+    let mut available_cpu = scheduler.cpu_budget.saturating_sub(
+        preprocess_running * scheduler.preprocess_threads + quant_running * scheduler.quant_threads,
+    );
+    let mut did_work = false;
+
+    if config.quant.preprocess {
+        let mut preprocess_ready =
+            db.list_runs_in_states(&[RunState::Verified, RunState::PreprocessFailed])?;
+        preprocess_ready.retain(|run| !state.attempted_preprocess.contains(&run.run_accession));
+        while available_cpu >= scheduler.preprocess_threads.max(1)
+            && preprocess_running < scheduler.preprocess_workers
+            && !preprocess_ready.is_empty()
+        {
+            let run = preprocess_ready.remove(0);
+            state.attempted_preprocess.insert(run.run_accession.clone());
+            let db = db.clone();
+            let paths = paths.clone();
+            let config = config.clone();
+            state.preprocess_tasks.push(thread::spawn(move || {
+                process_preprocess_run(&db, &paths, &config, run).map(|_| ())
+            }));
+            preprocess_running += 1;
+            available_cpu = available_cpu.saturating_sub(scheduler.preprocess_threads.max(1));
+            did_work = true;
+        }
+    }
+
+    let quant_states = if config.quant.preprocess {
+        vec![RunState::PreprocessDone, RunState::QuantFailed]
+    } else {
+        vec![RunState::Verified, RunState::QuantFailed]
+    };
+    let mut quant_ready = db.list_runs_in_states(&quant_states)?;
+    quant_ready.retain(|run| !state.attempted_quant.contains(&run.run_accession));
+    while available_cpu >= scheduler.quant_threads
+        && quant_running < scheduler.quant_workers
+        && !quant_ready.is_empty()
+    {
+        let run = quant_ready.remove(0);
+        state.attempted_quant.insert(run.run_accession.clone());
+        let db = db.clone();
+        let paths = paths.clone();
+        let config = config.clone();
+        let reference = reference.clone();
+        state.quant_tasks.push(thread::spawn(move || {
+            process_quant_run(&db, &paths, &config, &reference, run, false).map(|_| ())
+        }));
+        quant_running += 1;
+        available_cpu = available_cpu.saturating_sub(scheduler.quant_threads);
+        did_work = true;
+    }
+
+    Ok(did_work)
+}
+
+fn quant_scheduler_is_idle(
+    db: &Database,
+    config: &ProjectConfig,
+    state: &QuantSchedulerState,
+) -> Result<bool> {
+    let pending_preprocess = config.quant.preprocess
+        && !db
+            .list_runs_in_states(&[RunState::Verified, RunState::PreprocessRunning])?
+            .is_empty();
+    let pending_quant = if config.quant.preprocess {
+        !db.list_runs_in_states(&[RunState::PreprocessDone, RunState::QuantRunning])?
+            .is_empty()
+    } else {
+        !db.list_runs_in_states(&[RunState::Verified, RunState::QuantRunning])?
+            .is_empty()
+    };
+    Ok(state.preprocess_tasks.is_empty()
+        && state.quant_tasks.is_empty()
+        && !pending_preprocess
+        && !pending_quant)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SchedulerBudget {
+    cpu_budget: usize,
+    reserve_workers: usize,
+    preprocess_workers: usize,
+    preprocess_threads: usize,
+    quant_workers: usize,
+    quant_threads: usize,
+    download_workers: usize,
+}
+
+fn resolve_scheduler_budget(config: &ProjectConfig) -> SchedulerBudget {
+    let total_workers = std::thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(1);
+    let reserve_workers = if total_workers > 4 {
+        2
+    } else {
+        total_workers.saturating_sub(1)
+    };
+    let cpu_budget = total_workers.saturating_sub(reserve_workers).max(1);
+    let preprocess_threads = if config.quant.preprocess {
+        config.quant.preprocess_threads.max(1).min(cpu_budget)
+    } else {
+        0
+    };
+    let quant_threads = config.quant.threads.max(1).min(cpu_budget);
+    let quant_cpu_budget = if preprocess_threads > 0 {
+        cpu_budget
+            .saturating_sub(preprocess_threads)
+            .max(quant_threads)
+    } else {
+        cpu_budget
+    };
+    let quant_workers = if config.quant.workers == 0 {
+        quant_cpu_budget.saturating_div(quant_threads).max(1)
+    } else {
+        config.quant.workers.max(1)
+    };
+    let preprocess_workers = if config.quant.preprocess {
+        cpu_budget
+            .saturating_sub(quant_workers.saturating_mul(quant_threads))
+            .saturating_div(preprocess_threads.max(1))
+            .max(1)
+            .min(quant_workers.max(1))
+    } else {
+        0
+    };
+    SchedulerBudget {
+        cpu_budget,
+        reserve_workers,
+        preprocess_workers,
+        preprocess_threads,
+        quant_workers,
+        quant_threads,
+        download_workers: config.download.concurrency.max(1),
+    }
+}
+
+fn reap_finished_tasks(tasks: &mut Vec<thread::JoinHandle<Result<()>>>) -> Result<()> {
+    let mut index = 0;
+    while index < tasks.len() {
+        if tasks[index].is_finished() {
+            let handle = tasks.swap_remove(index);
+            handle
+                .join()
+                .map_err(|_| anyhow::anyhow!("worker thread panicked"))??;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
 fn print_run_progress(
     paths: &ProjectPaths,
     db: &Database,
     config: &ProjectConfig,
+    scheduler: &SchedulerBudget,
     elapsed: Duration,
     last_snapshot: &mut Option<String>,
 ) -> Result<()> {
     let runs = db.list_runs()?;
     let artifacts = db.list_artifacts()?;
     let events = db.list_events(5_000)?;
-    let progress = compute_progress_snapshot(&runs, &artifacts, &events, config);
+    let stages = db.list_project_stage_states()?;
+    let skipped_qc = db
+        .list_preprocess_qc()?
+        .into_iter()
+        .filter(|record| !record.gate_passed)
+        .count();
+    let progress = compute_progress_snapshot(&runs, &artifacts, &events, &stages, config);
     let eta_total_text = format_eta(progress.total_eta, progress.active_stage == "complete");
     let eta_download_text = format_eta(
         progress.download_eta,
@@ -2184,10 +2633,11 @@ fn print_run_progress(
         format!("Project\t{}", db.project_id()),
         format!("Elapsed\t{}", format_duration(elapsed)),
         format!(
-            "Stage\t{} | download {}/{} | quant {}/{} | normalize {} | corr {}",
+            "Stage\t{} | download {}/{} | preprocess {} | quant {}/{} | normalize {} | corr {}",
             progress.active_stage,
             progress.download_done,
             progress.total_runs,
+            progress.preprocess_display(),
             progress.quant_done,
             progress.total_runs,
             if progress.normalize_done {
@@ -2206,6 +2656,17 @@ fn print_run_progress(
             eta_total_text, eta_download_text, eta_processing_text, progress.limiting_stage
         ),
         format!("Active\t{}", progress.active_detail),
+        format!(
+            "Workers\tdownload {} | preprocess {}x{} | quant {}x{} | cpu_budget {} | reserve {}",
+            scheduler.download_workers,
+            scheduler.preprocess_workers,
+            scheduler.preprocess_threads,
+            scheduler.quant_workers,
+            scheduler.quant_threads,
+            scheduler.cpu_budget,
+            scheduler.reserve_workers
+        ),
+        format!("Skipped\t{} run(s) excluded by QC gate", skipped_qc),
     ];
     if progress.download_rate_bps > 0.0 {
         lines.push(format!(
@@ -2238,6 +2699,8 @@ fn format_eta(value: Option<Duration>, completed: bool) -> String {
 struct ProgressSnapshot {
     total_runs: u64,
     download_done: u64,
+    preprocess_enabled: bool,
+    preprocess_done: u64,
     quant_done: u64,
     normalize_done: bool,
     corr_stage_done: bool,
@@ -2257,6 +2720,7 @@ fn compute_progress_snapshot(
     runs: &[RunRecord],
     artifacts: &[ArtifactRecord],
     events: &[EventRecord],
+    project_stages: &[ProjectStageRecord],
     config: &ProjectConfig,
 ) -> ProgressSnapshot {
     let total_runs = runs.len() as u64;
@@ -2264,16 +2728,30 @@ fn compute_progress_snapshot(
         .iter()
         .filter(|run| matches!(run.state, RunState::Downloading))
         .count() as u64;
+    let preprocess_enabled = config.quant.preprocess;
+    let preprocess_running = runs
+        .iter()
+        .filter(|run| matches!(run.state, RunState::PreprocessRunning))
+        .count() as u64;
     let quant_running = runs
         .iter()
         .filter(|run| matches!(run.state, RunState::QuantRunning))
         .count() as u64;
+    let preprocess_done = if preprocess_enabled {
+        runs.iter()
+            .filter(|run| is_preprocess_done_state(run.state))
+            .count() as u64
+    } else {
+        total_runs
+    };
     let quant_done = runs
         .iter()
         .filter(|run| is_quant_done_state(run.state))
         .count() as u64;
-    let normalize_done = runs.iter().all(|run| is_de_done_state(run.state));
-    let corr_stage_done = runs.iter().all(|run| is_corr_done_state(run.state));
+    let normalize_done = is_project_stage_done(project_stages, &["deseq2", "normalize"])
+        || runs.iter().all(|run| is_de_done_state(run.state));
+    let corr_stage_done = is_project_stage_done(project_stages, &["corr"])
+        || runs.iter().all(|run| is_corr_done_state(run.state));
     let download_done = artifacts
         .iter()
         .filter(|artifact| {
@@ -2305,6 +2783,12 @@ fn compute_progress_snapshot(
         estimate_total_download_bytes(runs, config.download.prefer).max(downloaded_bytes);
     let remaining_download_bytes = expected_total_bytes.saturating_sub(downloaded_bytes);
     let download_rate_bps = estimate_download_speed_bps(events);
+    let preprocess_rate_runs_per_sec = estimate_stage_runs_per_sec(
+        events,
+        "preprocess",
+        "preprocessing started",
+        "preprocessing completed",
+    );
     let quant_rate_runs_per_sec = estimate_stage_runs_per_sec(
         events,
         "quant",
@@ -2324,22 +2808,47 @@ fn compute_progress_snapshot(
         "corr stage completed",
     );
     let download_eta = duration_from_rate(remaining_download_bytes as f64, download_rate_bps);
+    let preprocess_remaining_runs = total_runs.saturating_sub(preprocess_done);
+    let preprocess_eta = if preprocess_enabled {
+        duration_from_rate(
+            preprocess_remaining_runs as f64,
+            preprocess_rate_runs_per_sec,
+        )
+    } else {
+        Some(Duration::from_secs(0))
+    };
     let quant_remaining_runs = (runs
         .iter()
         .filter(|run| {
-            matches!(
-                run.state,
-                RunState::Verified
-                    | RunState::QuantRunning
-                    | RunState::QuantFailed
-                    | RunState::DeRunning
-                    | RunState::DeDone
-                    | RunState::DeFailed
-                    | RunState::CorrRunning
-                    | RunState::CorrDone
-                    | RunState::CorrFailed
-                    | RunState::Cleaned
-            )
+            if preprocess_enabled {
+                matches!(
+                    run.state,
+                    RunState::PreprocessDone
+                        | RunState::QuantRunning
+                        | RunState::QuantFailed
+                        | RunState::DeRunning
+                        | RunState::DeDone
+                        | RunState::DeFailed
+                        | RunState::CorrRunning
+                        | RunState::CorrDone
+                        | RunState::CorrFailed
+                        | RunState::Cleaned
+                )
+            } else {
+                matches!(
+                    run.state,
+                    RunState::Verified
+                        | RunState::QuantRunning
+                        | RunState::QuantFailed
+                        | RunState::DeRunning
+                        | RunState::DeDone
+                        | RunState::DeFailed
+                        | RunState::CorrRunning
+                        | RunState::CorrDone
+                        | RunState::CorrFailed
+                        | RunState::Cleaned
+                )
+            }
         })
         .count() as u64)
         .saturating_sub(quant_done);
@@ -2354,12 +2863,18 @@ fn compute_progress_snapshot(
     } else {
         corr_avg_secs.map(Duration::from_secs_f64)
     };
-    let processing_eta = match (quant_eta, de_eta, corr_eta) {
-        (Some(q), Some(d), Some(c)) => Some(q + d + c),
-        (Some(q), _, _) => Some(q),
-        (_, Some(d), Some(c)) => Some(d + c),
-        (_, Some(d), _) => Some(d),
-        (_, _, Some(c)) => Some(c),
+    let processing_eta = match (preprocess_eta, quant_eta, de_eta, corr_eta) {
+        (Some(p), Some(q), Some(d), Some(c)) => Some(p + q + d + c),
+        (Some(p), Some(q), _, _) => Some(p + q),
+        (Some(p), _, Some(d), Some(c)) => Some(p + d + c),
+        (Some(p), _, Some(d), _) => Some(p + d),
+        (Some(p), _, _, Some(c)) => Some(p + c),
+        (Some(p), _, _, _) => Some(p),
+        (None, Some(q), Some(d), Some(c)) => Some(q + d + c),
+        (None, Some(q), _, _) => Some(q),
+        (None, _, Some(d), Some(c)) => Some(d + c),
+        (None, _, Some(d), _) => Some(d),
+        (None, _, _, Some(c)) => Some(c),
         _ => None,
     };
     let total_eta = match (download_eta, processing_eta) {
@@ -2377,6 +2892,8 @@ fn compute_progress_snapshot(
     };
     let active_stage = if quant_running > 0 {
         "quantification"
+    } else if preprocess_running > 0 {
+        "preprocessing"
     } else if download_active > 0 {
         "download"
     } else if !corr_stage_done && normalize_done {
@@ -2392,6 +2909,9 @@ fn compute_progress_snapshot(
         runs,
         total_runs,
         download_active,
+        preprocess_enabled,
+        preprocess_running,
+        preprocess_done,
         quant_running,
         quant_done,
         normalize_done,
@@ -2402,6 +2922,8 @@ fn compute_progress_snapshot(
     ProgressSnapshot {
         total_runs,
         download_done,
+        preprocess_enabled,
+        preprocess_done,
         quant_done,
         normalize_done,
         corr_stage_done,
@@ -2423,6 +2945,9 @@ fn describe_active_work(
     runs: &[RunRecord],
     total_runs: u64,
     download_active: u64,
+    preprocess_enabled: bool,
+    preprocess_running: u64,
+    preprocess_done: u64,
     quant_running: u64,
     quant_done: u64,
     normalize_done: bool,
@@ -2437,6 +2962,15 @@ fn describe_active_work(
                 .count(),
             total_runs
         ),
+        "preprocessing" => {
+            if preprocess_enabled {
+                format!(
+                    "preprocessing {preprocess_running} run(s); {preprocess_done}/{total_runs} complete"
+                )
+            } else {
+                "preprocessing disabled".to_string()
+            }
+        }
         "quantification" => {
             format!("quantifying {quant_running} run(s); {quant_done}/{total_runs} complete")
         }
@@ -2465,6 +2999,7 @@ fn describe_active_work(
                         run.state,
                         RunState::DownloadFailed
                             | RunState::VerifyFailed
+                            | RunState::PreprocessFailed
                             | RunState::QuantFailed
                             | RunState::DeFailed
                             | RunState::CorrFailed
@@ -2480,28 +3015,412 @@ fn describe_active_work(
     }
 }
 
+impl ProgressSnapshot {
+    fn preprocess_display(&self) -> String {
+        if self.preprocess_enabled {
+            format!("{}/{}", self.preprocess_done, self.total_runs)
+        } else {
+            "off".to_string()
+        }
+    }
+}
+
+fn recover_interrupted_work(db: &Database) -> Result<()> {
+    let runs = db.list_runs()?;
+    let mut recovered_runs = 0_u64;
+    for run in runs {
+        let (next_state, message) = match run.state {
+            RunState::Downloading => (
+                Some(RunState::Resolved),
+                "download interrupted by prior process exit".to_string(),
+            ),
+            RunState::PreprocessRunning => (
+                Some(RunState::PreprocessFailed),
+                "preprocess interrupted by prior process exit".to_string(),
+            ),
+            RunState::QuantRunning => (
+                Some(RunState::QuantFailed),
+                "quant interrupted by prior process exit".to_string(),
+            ),
+            RunState::DeRunning => (
+                Some(RunState::QuantDone),
+                "DE stage interrupted by prior process exit".to_string(),
+            ),
+            RunState::CorrRunning => (
+                Some(RunState::DeDone),
+                "corr stage interrupted by prior process exit".to_string(),
+            ),
+            _ => (None, String::new()),
+        };
+        if let Some(next_state) = next_state {
+            db.set_run_state(&run.run_accession, next_state, Some(&message))?;
+            recovered_runs += 1;
+        }
+    }
+
+    let mut recovered_stages = 0_u64;
+    for stage in db.list_project_stage_states()? {
+        if stage.state == ProjectStageState::Running {
+            db.set_project_stage_state(
+                &stage.stage,
+                ProjectStageState::Failed,
+                Some("interrupted by prior process exit"),
+            )?;
+            recovered_stages += 1;
+        }
+    }
+
+    if recovered_runs > 0 || recovered_stages > 0 {
+        db.append_event(
+            "recovery",
+            None,
+            "interrupted work recovered",
+            json!({
+                "runs_recovered": recovered_runs,
+                "project_stages_recovered": recovered_stages
+            }),
+        )?;
+    }
+    Ok(())
+}
+
 fn has_pending_download_runs(db: &Database) -> Result<bool> {
     Ok(!db
         .list_runs_in_states(&[
             RunState::Resolved,
             RunState::Downloading,
             RunState::Downloaded,
-            RunState::DownloadFailed,
-            RunState::VerifyFailed,
         ])?
         .is_empty())
 }
 
-fn load_fastq_artifacts(db: &Database, run_accession: &str) -> Result<Vec<VerifiedFile>> {
+fn load_quant_input_fastqs(
+    db: &Database,
+    run_accession: &str,
+    preprocess_enabled: bool,
+) -> Result<Vec<VerifiedFile>> {
+    if preprocess_enabled {
+        let trimmed = load_artifacts_by_kinds(
+            db,
+            run_accession,
+            &[
+                ArtifactKind::FastqTrimmedR1,
+                ArtifactKind::FastqTrimmedR2,
+                ArtifactKind::FastqTrimmedSingle,
+            ],
+        )?;
+        if !trimmed.is_empty() {
+            return Ok(trimmed);
+        }
+    }
+    load_raw_fastq_artifacts(db, run_accession)
+}
+
+fn load_trimmed_fastq_artifacts(db: &Database, run_accession: &str) -> Result<Vec<VerifiedFile>> {
+    load_artifacts_by_kinds(
+        db,
+        run_accession,
+        &[
+            ArtifactKind::FastqTrimmedR1,
+            ArtifactKind::FastqTrimmedR2,
+            ArtifactKind::FastqTrimmedSingle,
+        ],
+    )
+}
+
+fn load_raw_fastq_artifacts(db: &Database, run_accession: &str) -> Result<Vec<VerifiedFile>> {
+    load_artifacts_by_kinds(
+        db,
+        run_accession,
+        &[
+            ArtifactKind::FastqR1,
+            ArtifactKind::FastqR2,
+            ArtifactKind::FastqSingle,
+        ],
+    )
+}
+
+fn apply_fastq_retention(
+    db: &Database,
+    paths: &ProjectPaths,
+    config: &ProjectConfig,
+    run_accession: &str,
+) -> Result<()> {
+    let artifacts = db.list_artifacts_for_run(Some(run_accession))?;
+    let mut remove_kinds = Vec::new();
+    match config.quant.fastq_retention {
+        FastqRetention::Both => return Ok(()),
+        FastqRetention::Original => {
+            remove_kinds.extend([
+                ArtifactKind::FastqTrimmedR1,
+                ArtifactKind::FastqTrimmedR2,
+                ArtifactKind::FastqTrimmedSingle,
+            ]);
+        }
+        FastqRetention::Trimmed => {
+            remove_kinds.extend([
+                ArtifactKind::FastqR1,
+                ArtifactKind::FastqR2,
+                ArtifactKind::FastqSingle,
+            ]);
+        }
+        FastqRetention::None => {
+            remove_kinds.extend([
+                ArtifactKind::FastqR1,
+                ArtifactKind::FastqR2,
+                ArtifactKind::FastqSingle,
+                ArtifactKind::FastqTrimmedR1,
+                ArtifactKind::FastqTrimmedR2,
+                ArtifactKind::FastqTrimmedSingle,
+            ]);
+        }
+    }
+
+    let selected = artifacts
+        .into_iter()
+        .filter(|artifact| remove_kinds.contains(&artifact.kind))
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return Ok(());
+    }
+
+    let trash_dir = paths.trash_run_dir(run_accession).join("fastq_retention");
+    fs::create_dir_all(&trash_dir)
+        .with_context(|| format!("failed to create {}", trash_dir.display()))?;
+    let mut moved = Vec::new();
+    for artifact in selected {
+        let source = PathBuf::from(&artifact.path);
+        if !source.exists() {
+            db.delete_artifact(&artifact.path)?;
+            continue;
+        }
+        let file_name = source.file_name().ok_or_else(|| {
+            anyhow::anyhow!("artifact path missing basename: {}", source.display())
+        })?;
+        let destination = trash_dir.join(format!(
+            "{}_{}",
+            artifact.kind.as_str(),
+            file_name.to_string_lossy()
+        ));
+        if destination.exists() {
+            fs::remove_file(&destination)
+                .with_context(|| format!("failed to replace {}", destination.display()))?;
+        }
+        fs::rename(&source, &destination).or_else(|_| {
+            fs::copy(&source, &destination)
+                .with_context(|| {
+                    format!(
+                        "failed to copy {} to {} during retention cleanup",
+                        source.display(),
+                        destination.display()
+                    )
+                })
+                .and_then(|_| {
+                    fs::remove_file(&source).with_context(|| {
+                        format!("failed to remove {} after copy", source.display())
+                    })
+                })
+        })?;
+        db.record_artifact(&ArtifactRecord {
+            project_id: db.project_id().to_string(),
+            run_accession: Some(run_accession.to_string()),
+            kind: ArtifactKind::Trash,
+            path: destination.display().to_string(),
+            blob_id: None,
+            shared_path: None,
+            checksum_type: artifact.checksum_type.clone(),
+            checksum: artifact.checksum.clone(),
+            bytes: artifact.bytes,
+            created_at: now_rfc3339(),
+        })?;
+        db.delete_artifact(&artifact.path)?;
+        moved.push(destination.display().to_string());
+    }
+    db.append_event(
+        "retention",
+        Some(run_accession),
+        "FASTQ retention policy applied",
+        json!({
+            "policy": fastq_retention_label(config.quant.fastq_retention),
+            "moved_to_trash": moved,
+        }),
+    )?;
+    Ok(())
+}
+
+fn parse_preprocess_qc_report(
+    project_id: &str,
+    run_accession: &str,
+    report_path: &Path,
+    gate: &rnaa_core::PreprocessQcGate,
+) -> Result<rnaa_core::PreprocessQcRecord> {
+    let report_text = fs::read_to_string(report_path).with_context(|| {
+        format!(
+            "failed to read preprocess QC report {}",
+            report_path.display()
+        )
+    })?;
+    let report: serde_json::Value = serde_json::from_str(&report_text).with_context(|| {
+        format!(
+            "failed to parse preprocess QC report {}",
+            report_path.display()
+        )
+    })?;
+
+    let passed_reads = json_u64(&report, &["filtering_result", "passed_filter_reads"])
+        .or_else(|| json_u64(&report, &["passed_reads"]))
+        .unwrap_or(0);
+    let failed_reads = json_u64(&report, &["failed_reads"]).unwrap_or_else(|| {
+        json_u64(&report, &["filtering_result", "low_quality_reads"]).unwrap_or(0)
+            + json_u64(&report, &["filtering_result", "low_complexity_reads"]).unwrap_or(0)
+            + json_u64(&report, &["filtering_result", "too_many_N_reads"]).unwrap_or(0)
+            + json_u64(&report, &["filtering_result", "too_short_reads"]).unwrap_or(0)
+    });
+    let total_reads_before = json_u64(&report, &["summary", "before_filtering", "total_reads"])
+        .unwrap_or(passed_reads.saturating_add(failed_reads));
+    let total_reads_before = total_reads_before.max(passed_reads.saturating_add(failed_reads));
+    let pass_rate = ratio(passed_reads, total_reads_before);
+    let failed_rate = ratio(failed_reads, total_reads_before);
+    let low_quality_reads =
+        json_u64(&report, &["filtering_result", "low_quality_reads"]).unwrap_or(0);
+    let low_complexity_reads =
+        json_u64(&report, &["filtering_result", "low_complexity_reads"]).unwrap_or(0);
+    let too_many_n_reads =
+        json_u64(&report, &["filtering_result", "too_many_N_reads"]).unwrap_or(0);
+    let too_short_reads = json_u64(&report, &["filtering_result", "too_short_reads"]).unwrap_or(0);
+    let duplicated_reads = json_u64(&report, &["duplicated_reads"]).unwrap_or(0);
+    let duplication_rate = json_f64(&report, &["duplication", "rate"]);
+    let adapter_trimmed_reads = json_u64(&report, &["adapter_cutting", "adapter_trimmed_reads"])
+        .unwrap_or_else(|| json_u64(&report, &["adapter_trimmed_reads"]).unwrap_or(0));
+    let adapter_trimmed_bases = json_u64(&report, &["adapter_cutting", "adapter_trimmed_bases"])
+        .unwrap_or_else(|| json_u64(&report, &["adapter_trimmed_bases"]).unwrap_or(0));
+    let mode = json_str(&report, &["mode"])
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "unknown".to_string());
+    let threads = json_u64(&report, &["threads"]).unwrap_or(1);
+
+    let mut failures = Vec::new();
+    if let Some(min_pass_rate) = gate.min_pass_rate
+        && pass_rate < min_pass_rate
+    {
+        failures.push(format!("pass_rate {:.4} < {:.4}", pass_rate, min_pass_rate));
+    }
+    if let Some(max_low_quality_rate) = gate.max_low_quality_rate
+        && ratio(low_quality_reads, total_reads_before) > max_low_quality_rate
+    {
+        failures.push(format!(
+            "low_quality_rate {:.4} > {:.4}",
+            ratio(low_quality_reads, total_reads_before),
+            max_low_quality_rate
+        ));
+    }
+    if let Some(max_low_complexity_rate) = gate.max_low_complexity_rate
+        && ratio(low_complexity_reads, total_reads_before) > max_low_complexity_rate
+    {
+        failures.push(format!(
+            "low_complexity_rate {:.4} > {:.4}",
+            ratio(low_complexity_reads, total_reads_before),
+            max_low_complexity_rate
+        ));
+    }
+    if let Some(max_too_many_n_rate) = gate.max_too_many_n_rate
+        && ratio(too_many_n_reads, total_reads_before) > max_too_many_n_rate
+    {
+        failures.push(format!(
+            "too_many_n_rate {:.4} > {:.4}",
+            ratio(too_many_n_reads, total_reads_before),
+            max_too_many_n_rate
+        ));
+    }
+    if let Some(max_too_short_rate) = gate.max_too_short_rate
+        && ratio(too_short_reads, total_reads_before) > max_too_short_rate
+    {
+        failures.push(format!(
+            "too_short_rate {:.4} > {:.4}",
+            ratio(too_short_reads, total_reads_before),
+            max_too_short_rate
+        ));
+    }
+    if let Some(max_duplication_rate) = gate.max_duplication_rate
+        && duplication_rate.unwrap_or(0.0) > max_duplication_rate
+    {
+        failures.push(format!(
+            "duplication_rate {:.4} > {:.4}",
+            duplication_rate.unwrap_or(0.0),
+            max_duplication_rate
+        ));
+    }
+
+    Ok(rnaa_core::PreprocessQcRecord {
+        project_id: project_id.to_string(),
+        run_accession: run_accession.to_string(),
+        report_path: report_path.display().to_string(),
+        mode,
+        threads,
+        total_reads_before,
+        passed_reads,
+        failed_reads,
+        pass_rate,
+        failed_rate,
+        low_quality_reads,
+        low_complexity_reads,
+        too_many_n_reads,
+        too_short_reads,
+        duplicated_reads,
+        duplication_rate,
+        adapter_trimmed_reads,
+        adapter_trimmed_bases,
+        gate_passed: failures.is_empty(),
+        gate_reason: if failures.is_empty() {
+            None
+        } else {
+            Some(failures.join("; "))
+        },
+        updated_at: now_rfc3339(),
+    })
+}
+
+fn json_u64(value: &serde_json::Value, path: &[&str]) -> Option<u64> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_u64()
+}
+
+fn json_f64(value: &serde_json::Value, path: &[&str]) -> Option<f64> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_f64()
+}
+
+fn json_str<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str()
+}
+
+fn ratio(numerator: u64, denominator: u64) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
+fn load_artifacts_by_kinds(
+    db: &Database,
+    run_accession: &str,
+    kinds: &[ArtifactKind],
+) -> Result<Vec<VerifiedFile>> {
     let artifacts = db.list_artifacts_for_run(Some(run_accession))?;
     let mut verified = artifacts
         .into_iter()
-        .filter(|artifact| {
-            matches!(
-                artifact.kind,
-                ArtifactKind::FastqR1 | ArtifactKind::FastqR2 | ArtifactKind::FastqSingle
-            )
-        })
+        .filter(|artifact| kinds.contains(&artifact.kind))
         .map(|artifact| VerifiedFile {
             artifact_kind: artifact.kind,
             path: PathBuf::from(artifact.path),
@@ -2515,15 +3434,56 @@ fn load_fastq_artifacts(db: &Database, run_accession: &str) -> Result<Vec<Verifi
     Ok(verified)
 }
 
+fn select_preprocess_report_path(
+    db: &Database,
+    run_accession: &str,
+    artifacts: &[ArtifactRecord],
+) -> Option<PathBuf> {
+    db.get_preprocess_qc(run_accession)
+        .ok()
+        .flatten()
+        .map(|qc| PathBuf::from(qc.report_path))
+        .or_else(|| {
+            artifacts
+                .iter()
+                .filter(|artifact| artifact.kind == ArtifactKind::PreprocessReport)
+                .map(|artifact| PathBuf::from(&artifact.path))
+                .max()
+        })
+}
+
+fn desired_run_state_after_qc_reevaluation(
+    artifacts: &[ArtifactRecord],
+    gate_passed: bool,
+) -> RunState {
+    if !gate_passed {
+        return RunState::PreprocessFailed;
+    }
+    if artifacts.iter().any(|artifact| {
+        matches!(
+            artifact.kind,
+            ArtifactKind::QuantDir | ArtifactKind::QuantAbundanceH5 | ArtifactKind::QuantRunInfo
+        )
+    }) {
+        return RunState::QuantDone;
+    }
+    if artifacts.iter().any(|artifact| {
+        matches!(
+            artifact.kind,
+            ArtifactKind::FastqTrimmedR1
+                | ArtifactKind::FastqTrimmedR2
+                | ArtifactKind::FastqTrimmedSingle
+        )
+    }) {
+        return RunState::PreprocessDone;
+    }
+    RunState::Verified
+}
+
 fn refresh_samplesheet(paths: &ProjectPaths, db: &Database) -> Result<()> {
     let runs = db.list_runs()?;
     let artifacts = db.list_artifacts()?;
-    let metadata_columns = runs
-        .iter()
-        .flat_map(|run| run.metadata.keys().cloned())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
+    let metadata_columns = db.list_metadata_columns()?;
     let column_map = load_or_init_column_map(&paths.column_map_path(), &metadata_columns)?;
     write_samplesheet(
         &paths.samplesheet_path(),
@@ -2549,6 +3509,22 @@ fn is_quant_done_state(state: RunState) -> bool {
     )
 }
 
+fn is_preprocess_done_state(state: RunState) -> bool {
+    matches!(
+        state,
+        RunState::PreprocessDone
+            | RunState::QuantRunning
+            | RunState::QuantDone
+            | RunState::DeRunning
+            | RunState::DeDone
+            | RunState::DeFailed
+            | RunState::CorrRunning
+            | RunState::CorrDone
+            | RunState::CorrFailed
+            | RunState::Cleaned
+    )
+}
+
 fn is_de_done_state(state: RunState) -> bool {
     matches!(
         state,
@@ -2558,6 +3534,15 @@ fn is_de_done_state(state: RunState) -> bool {
 
 fn is_corr_done_state(state: RunState) -> bool {
     matches!(state, RunState::CorrDone | RunState::Cleaned)
+}
+
+fn is_project_stage_done(stages: &[ProjectStageRecord], names: &[&str]) -> bool {
+    names.iter().any(|target| {
+        stages
+            .iter()
+            .find(|stage| stage.stage == *target)
+            .is_some_and(|stage| stage.state == ProjectStageState::Done)
+    })
 }
 
 fn ratio_pct(done: u64, total: u64) -> f64 {
@@ -3154,6 +4139,25 @@ fn parse_cleanup_mode(value: &str) -> Result<CleanupMode> {
     }
 }
 
+fn parse_fastq_retention(value: &str) -> Result<FastqRetention> {
+    match value {
+        "both" => Ok(FastqRetention::Both),
+        "original" => Ok(FastqRetention::Original),
+        "trimmed" => Ok(FastqRetention::Trimmed),
+        "none" => Ok(FastqRetention::None),
+        _ => bail!("unsupported fastq retention mode: {value}"),
+    }
+}
+
+fn fastq_retention_label(value: FastqRetention) -> &'static str {
+    match value {
+        FastqRetention::Both => "both",
+        FastqRetention::Original => "original",
+        FastqRetention::Trimmed => "trimmed",
+        FastqRetention::None => "none",
+    }
+}
+
 fn validate_where_predicate(value: &str) -> Result<()> {
     let trimmed = value.trim();
     let valid = trimmed.contains("!=") || trimmed.contains('=');
@@ -3230,4 +4234,105 @@ fn validate_design_formula(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_preprocess_qc_report, ratio};
+    use rnaa_core::PreprocessQcGate;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn parses_normalized_preprocess_qc_and_computes_rates() {
+        let temp = TempDir::new().expect("failed to create tempdir");
+        let report = temp.path().join("fasterp.json");
+        fs::write(
+            &report,
+            r#"{
+              "mode":"single",
+              "threads":16,
+              "summary":{"before_filtering":{"total_reads":100},"after_filtering":{"total_reads":92}},
+              "filtering_result":{
+                "passed_filter_reads":92,
+                "low_quality_reads":3,
+                "low_complexity_reads":2,
+                "too_many_N_reads":1,
+                "too_short_reads":2,
+                "too_long_reads":0
+              },
+              "duplicated_reads":7,
+              "duplication":{"rate":0.07},
+              "adapter_cutting":{"adapter_trimmed_reads":40,"adapter_trimmed_bases":120}
+            }"#,
+        )
+        .expect("failed to write report");
+
+        let qc = parse_preprocess_qc_report("P1", "RUN1", &report, &PreprocessQcGate::default())
+            .expect("failed to parse qc");
+        assert_eq!(qc.threads, 16);
+        assert_eq!(qc.total_reads_before, 100);
+        assert_eq!(qc.passed_reads, 92);
+        assert_eq!(qc.failed_reads, 8);
+        assert_eq!(qc.low_quality_reads, 3);
+        assert_eq!(qc.too_many_n_reads, 1);
+        assert_eq!(qc.adapter_trimmed_reads, 40);
+        assert_eq!(qc.adapter_trimmed_bases, 120);
+        assert!(qc.gate_passed);
+        assert_eq!(qc.pass_rate, ratio(92, 100));
+        assert_eq!(qc.failed_rate, ratio(8, 100));
+    }
+
+    #[test]
+    fn qc_gate_rejects_run_when_thresholds_fail() {
+        let temp = TempDir::new().expect("failed to create tempdir");
+        let report = temp.path().join("fasterp.json");
+        fs::write(
+            &report,
+            r#"{
+              "mode":"single",
+              "threads":8,
+              "summary":{"before_filtering":{"total_reads":10},"after_filtering":{"total_reads":7}},
+              "filtering_result":{
+                "passed_filter_reads":7,
+                "low_quality_reads":2,
+                "low_complexity_reads":1,
+                "too_many_N_reads":0,
+                "too_short_reads":0,
+                "too_long_reads":0
+              },
+              "duplicated_reads":0,
+              "duplication":{"rate":0.0},
+              "adapter_cutting":{"adapter_trimmed_reads":2,"adapter_trimmed_bases":8}
+            }"#,
+        )
+        .expect("failed to write report");
+
+        let qc = parse_preprocess_qc_report(
+            "P1",
+            "RUN1",
+            &report,
+            &PreprocessQcGate {
+                min_pass_rate: Some(0.8),
+                max_low_quality_rate: Some(0.1),
+                ..PreprocessQcGate::default()
+            },
+        )
+        .expect("failed to parse qc");
+        assert!(!qc.gate_passed);
+        let reason = qc.gate_reason.expect("expected gate reason");
+        assert!(reason.contains("pass_rate"));
+        assert!(reason.contains("low_quality_rate"));
+    }
+
+    #[test]
+    fn default_qc_gate_uses_conservative_fail_fast_thresholds() {
+        let gate = PreprocessQcGate::default();
+        assert_eq!(gate.min_pass_rate, Some(0.60));
+        assert_eq!(gate.max_low_quality_rate, Some(0.30));
+        assert_eq!(gate.max_too_many_n_rate, Some(0.10));
+        assert_eq!(gate.max_too_short_rate, Some(0.40));
+        assert_eq!(gate.max_low_complexity_rate, None);
+        assert_eq!(gate.max_duplication_rate, None);
+    }
 }

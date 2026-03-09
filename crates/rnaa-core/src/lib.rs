@@ -10,16 +10,17 @@ pub mod util;
 
 pub use config::{
     CleanupMode, CleanupWhen, CorrConfig, Deseq2Config, DownloadConfig, DownloadMethod,
-    DownloadPreference, MetadataMergeStrategy, ProjectConfig, ProjectSection, QuantConfig,
-    RefsConfig, ResolverConfig, StorageConfig,
+    DownloadPreference, FastqRetention, MetadataMergeStrategy, PreprocessQcGate, ProjectConfig,
+    ProjectSection, QuantConfig, RefsConfig, ResolverConfig, StorageConfig,
 };
 pub use db::Database;
 pub use manifest::{ManifestArtifact, StageManifest};
 pub use model::{
     AdjustedMatrix, ArtifactKind, ArtifactRecord, ContrastSpec, CorrelationMethod, EventRecord,
     InputRecord, InputType, LibraryLayout, MetadataOverrideRecord, OutputMode, PreprocessArtifacts,
-    ProjectRecord, QuantArtifacts, ReferenceBundle, RemoteFile, RemoteFileKind, ResolvedProject,
-    RunRecord, SamplesheetRow, SharedBlobRecord, VerifiedFile,
+    PreprocessQcRecord, ProjectRecord, ProjectStageRecord, QuantArtifacts, ReferenceBundle,
+    RemoteFile, RemoteFileKind, ResolvedProject, RunRecord, SamplesheetRow, SharedBlobRecord,
+    VerifiedFile,
 };
 pub use paths::ProjectPaths;
-pub use state::RunState;
+pub use state::{ProjectStageState, RunState};

@@ -50,7 +50,6 @@ native = [
     "dep:ureq",
     "dep:libdeflater",
     "dep:gzp",
-    "flate2/zlib-ng",
 ]
 python = []
 wasm = [

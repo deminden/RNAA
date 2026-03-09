@@ -94,7 +94,7 @@ impl Default for DownloadConfig {
             retries: default_download_retries(),
             backoff_seconds: default_backoff_seconds(),
             prefer: DownloadPreference::Fastq,
-            method: DownloadMethod::Curl,
+            method: DownloadMethod::Reqwest,
         }
     }
 }
@@ -138,6 +138,12 @@ pub struct QuantConfig {
     pub workers: usize,
     #[serde(default)]
     pub preprocess: bool,
+    #[serde(default)]
+    pub fastq_retention: FastqRetention,
+    #[serde(default = "default_quant_preprocess_threads")]
+    pub preprocess_threads: usize,
+    #[serde(default)]
+    pub qc_gate: PreprocessQcGate,
     #[serde(default = "default_quant_preprocess_strict")]
     pub preprocess_strict: bool,
     #[serde(default = "default_quant_preprocess_max_input_mb")]
@@ -157,6 +163,9 @@ impl Default for QuantConfig {
             threads: default_quant_threads(),
             workers: default_quant_workers(),
             preprocess: false,
+            fastq_retention: FastqRetention::Both,
+            preprocess_threads: default_quant_preprocess_threads(),
+            qc_gate: PreprocessQcGate::default(),
             preprocess_strict: default_quant_preprocess_strict(),
             preprocess_max_input_mb: default_quant_preprocess_max_input_mb(),
             cleanup: CleanupMode::None,
@@ -235,8 +244,8 @@ pub enum DownloadPreference {
 #[serde(rename_all = "lowercase")]
 pub enum DownloadMethod {
     #[default]
-    Curl,
-    Wget,
+    #[serde(alias = "curl", alias = "wget")]
+    Reqwest,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -256,6 +265,47 @@ pub enum CleanupWhen {
     Success,
     Always,
     Never,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FastqRetention {
+    #[default]
+    Both,
+    Original,
+    Trimmed,
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreprocessQcGate {
+    #[serde(default)]
+    pub min_pass_rate: Option<f64>,
+    #[serde(default)]
+    pub max_low_quality_rate: Option<f64>,
+    #[serde(default)]
+    pub max_low_complexity_rate: Option<f64>,
+    #[serde(default)]
+    pub max_too_many_n_rate: Option<f64>,
+    #[serde(default)]
+    pub max_too_short_rate: Option<f64>,
+    #[serde(default)]
+    pub max_duplication_rate: Option<f64>,
+}
+
+impl Default for PreprocessQcGate {
+    fn default() -> Self {
+        Self {
+            // Conservative fail-fast defaults intended to block catastrophically bad inputs
+            // without excluding runs for biologically variable duplication or complexity alone.
+            min_pass_rate: Some(0.60),
+            max_low_quality_rate: Some(0.30),
+            max_low_complexity_rate: None,
+            max_too_many_n_rate: Some(0.10),
+            max_too_short_rate: Some(0.40),
+            max_duplication_rate: None,
+        }
+    }
 }
 
 fn default_resolver_provider() -> String {
@@ -319,6 +369,10 @@ fn default_quant_workers() -> usize {
 
 fn default_quant_preprocess_strict() -> bool {
     true
+}
+
+fn default_quant_preprocess_threads() -> usize {
+    16
 }
 
 fn default_quant_preprocess_max_input_mb() -> usize {

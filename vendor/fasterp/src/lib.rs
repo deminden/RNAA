@@ -5,7 +5,13 @@
 //! # Features
 //! - `native` (default): Full functionality with threading, file I/O, S3, HTTP
 //! - `wasm`: WebAssembly support with buffer-based processing
-#![allow(dead_code, unused_variables, unused_unsafe)]
+#![allow(
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_unsafe,
+    private_interfaces
+)]
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -36,6 +42,279 @@ pub mod split;
 // WASM module
 #[cfg(feature = "wasm")]
 pub mod wasm;
+
+pub fn version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[cfg(feature = "native")]
+#[derive(Debug, Clone)]
+pub struct NativeProcessResult {
+    pub passed_reads: usize,
+    pub failed_reads: usize,
+    pub json_report: String,
+}
+
+#[cfg(feature = "native")]
+pub fn process_paths(
+    input: &str,
+    output: &str,
+    input2: Option<&str>,
+    output2: Option<&str>,
+    threads: usize,
+) -> anyhow::Result<NativeProcessResult> {
+    use crate::adapter::AdapterConfig;
+    use crate::io::open_input;
+    use crate::pipeline::{
+        Batch, PairedBatch, PairedWorkerResult, WorkerResult, merger_thread,
+        paired_merger_thread, paired_producer_thread_with_paths, paired_worker_thread,
+        producer_thread, worker_thread,
+    };
+    use crate::processor::{process_fastq_stream, process_paired_fastq_stream};
+    use crate::split::{SplitConfig, SplitWriter};
+    use crate::trimming::TrimmingConfig;
+    use crossbeam_channel::bounded;
+    use serde_json::json;
+    use std::thread;
+
+    let threads = threads.max(1);
+    let compression = 6;
+    let parallel_compression = false;
+    let split_config = SplitConfig::default();
+    let adapter_config = AdapterConfig::new();
+    let trimming_config = TrimmingConfig {
+        enable_trim_front: false,
+        enable_trim_tail: true,
+        cut_mean_quality: 20,
+        cut_window_size: 4,
+        trim_front_bases: 0,
+        trim_tail_bases: 0,
+        max_len: 0,
+        enable_poly_g: true,
+        enable_poly_x: false,
+        poly_min_len: 10,
+        adapter_config: adapter_config.clone(),
+    };
+
+    if let (Some(input2), Some(output2)) = (input2, output2) {
+        let mut trimming_config_r2 = trimming_config.clone();
+        trimming_config_r2.adapter_config.adapter_seq = adapter_config.adapter_seq_r2.clone();
+        let acc = if threads == 1 {
+            let reader1 = open_input(input)?;
+            let reader2 = open_input(input2)?;
+            let mut writer1 =
+                SplitWriter::new(output, split_config.clone(), compression, parallel_compression)?;
+            let mut writer2 =
+                SplitWriter::new(output2, split_config.clone(), compression, parallel_compression)?;
+            let acc = process_paired_fastq_stream(
+                reader1,
+                reader2,
+                &mut writer1,
+                &mut writer2,
+                None::<&mut Vec<u8>>,
+                false,
+                false,
+                15,
+                5,
+                15,
+                40,
+                0,
+                false,
+                30,
+                &trimming_config,
+                &trimming_config_r2,
+                None,
+                None,
+                None,
+                None,
+            )?;
+            writer1.finish()?;
+            writer2.finish()?;
+            acc
+        } else {
+            let backlog = threads + 1;
+            let batch_bytes = 32 * 1024 * 1024;
+            let (batch_tx, batch_rx) = bounded::<Option<PairedBatch>>(backlog);
+            let (result_tx, result_rx) = bounded::<Option<PairedWorkerResult>>(backlog);
+            let producer = thread::spawn({
+                let input1 = input.to_string();
+                let input2 = input2.to_string();
+                move || {
+                    paired_producer_thread_with_paths(
+                        input1, input2, batch_bytes, batch_tx, threads,
+                    )
+                }
+            });
+            let mut workers = Vec::new();
+            for _ in 0..threads {
+                let batch_rx = batch_rx.clone();
+                let result_tx = result_tx.clone();
+                let trim1 = trimming_config.clone();
+                let trim2 = trimming_config_r2.clone();
+                workers.push(thread::spawn(move || {
+                    paired_worker_thread(
+                        batch_rx, result_tx, 15, 5, 15, 40, 0, false, 30, false, trim1, trim2,
+                        None, None, None, None,
+                    );
+                }));
+            }
+            drop(batch_rx);
+            drop(result_tx);
+            let merger = thread::spawn({
+                let output1 = output.to_string();
+                let output2 = output2.to_string();
+                let split_config = split_config.clone();
+                move || {
+                    paired_merger_thread(
+                        result_rx,
+                        output1,
+                        output2,
+                        threads,
+                        Some(compression),
+                        split_config,
+                        parallel_compression,
+                    )
+                }
+            });
+            producer.join().expect("paired producer thread panicked")?;
+            for worker in workers {
+                worker.join().expect("paired worker thread panicked");
+            }
+            merger.join().expect("paired merger thread panicked")?
+        };
+        let passed_reads = acc.after_r1.total_reads;
+        let failed_reads = acc.before_r1.total_reads.saturating_sub(passed_reads);
+        return Ok(NativeProcessResult {
+            passed_reads,
+            failed_reads,
+            json_report: json!({
+                "mode": "paired",
+                "threads": threads,
+                "passed_reads": passed_reads,
+                "failed_reads": failed_reads,
+                "duplicated_reads": acc.duplicated,
+                "summary": {
+                    "before_filtering": { "total_reads": acc.before_r1.total_reads },
+                    "after_filtering": { "total_reads": passed_reads },
+                },
+                "filtering_result": {
+                    "passed_filter_reads": passed_reads,
+                    "low_quality_reads": acc.low_quality * 2,
+                    "low_complexity_reads": acc.low_complexity * 2,
+                    "too_many_N_reads": acc.too_many_n * 2,
+                    "too_short_reads": acc.too_short * 2,
+                    "too_long_reads": 0,
+                },
+                "duplication": {
+                    "rate": if acc.before_r1.total_reads == 0 {
+                        0.0
+                    } else {
+                        acc.duplicated as f64 / acc.before_r1.total_reads as f64
+                    }
+                },
+                "adapter_cutting": {
+                    "adapter_trimmed_reads": acc.adapter_trimmed_reads,
+                    "adapter_trimmed_bases": acc.adapter_trimmed_bases,
+                },
+                "adapter_trimmed_reads": acc.adapter_trimmed_reads,
+                "adapter_trimmed_bases": acc.adapter_trimmed_bases,
+            })
+            .to_string(),
+        });
+    }
+
+    let acc = if threads == 1 {
+        let reader = open_input(input)?;
+        let mut writer =
+            SplitWriter::new(output, split_config.clone(), compression, parallel_compression)?;
+        let acc = process_fastq_stream(
+            reader,
+            &mut writer,
+            15,
+            5,
+            15,
+            40,
+            0,
+            false,
+            30,
+            &trimming_config,
+        )?;
+        writer.finish()?;
+        acc
+    } else {
+        let backlog = threads + 1;
+        let batch_bytes = 32 * 1024 * 1024;
+        let (batch_tx, batch_rx) = bounded::<Option<Batch>>(backlog);
+        let (result_tx, result_rx) = bounded::<Option<WorkerResult>>(backlog);
+        let producer = thread::spawn({
+            let input = input.to_string();
+            move || producer_thread(input, batch_bytes, batch_tx)
+        });
+        let mut workers = Vec::new();
+        for _ in 0..threads {
+            let batch_rx = batch_rx.clone();
+            let result_tx = result_tx.clone();
+            let trim = trimming_config.clone();
+            workers.push(thread::spawn(move || {
+                worker_thread(batch_rx, result_tx, 15, 5, 15, 40, 0, false, 30, false, trim);
+            }));
+        }
+        drop(batch_rx);
+        drop(result_tx);
+        let merger = thread::spawn({
+            let output = output.to_string();
+            let split_config = split_config.clone();
+            move || {
+                merger_thread(
+                    result_rx,
+                    output,
+                    threads,
+                    Some(compression),
+                    split_config,
+                    parallel_compression,
+                )
+            }
+        });
+        producer.join().expect("single-end producer thread panicked")?;
+        for worker in workers {
+            worker.join().expect("single-end worker thread panicked");
+        }
+        merger.join().expect("single-end merger thread panicked")?
+    };
+    let passed_reads = acc.after.total_reads;
+    let failed_reads = acc.before.total_reads.saturating_sub(passed_reads);
+    Ok(NativeProcessResult {
+        passed_reads,
+        failed_reads,
+        json_report: json!({
+            "mode": "single",
+            "threads": threads,
+            "passed_reads": passed_reads,
+            "failed_reads": failed_reads,
+            "duplicated_reads": 0,
+            "summary": {
+                "before_filtering": { "total_reads": acc.before.total_reads },
+                "after_filtering": { "total_reads": passed_reads },
+            },
+            "filtering_result": {
+                "passed_filter_reads": passed_reads,
+                "low_quality_reads": acc.low_quality,
+                "low_complexity_reads": acc.low_complexity,
+                "too_many_N_reads": acc.too_many_n,
+                "too_short_reads": acc.too_short,
+                "too_long_reads": 0,
+            },
+            "duplication": { "rate": 0.0 },
+            "adapter_cutting": {
+                "adapter_trimmed_reads": acc.adapter_trimmed_reads,
+                "adapter_trimmed_bases": acc.adapter_trimmed_bases,
+            },
+            "adapter_trimmed_reads": acc.adapter_trimmed_reads,
+            "adapter_trimmed_bases": acc.adapter_trimmed_bases,
+        })
+        .to_string(),
+    })
+}
 
 #[cfg(feature = "python")]
 #[pyclass]

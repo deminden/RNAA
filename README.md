@@ -17,6 +17,9 @@ Current workspace version: `0.2.1`.
 - cached GENCODE preset references for human and mouse
   default presets use matching `transcripts.fa.gz` plus `annotation.gtf.gz`
 - optional in-process `fasterp` preprocessing before quantification
+- FASTQ retention after successful quantification: `both`, `original`, `trimmed`, or `none`
+- threaded `fasterp` preprocessing with configurable per-run thread count
+- normalized preprocess QC storage with conservative default gating before quant/downstream stages
 - quantification through `Rscript` plus kallisto
 - restart-safe quant reconciliation from existing artifacts and matching reference manifests
 - normalization-only stage via `rnaa normalize`
@@ -40,7 +43,7 @@ Current workspace version: `0.2.1`.
 - Rust stable toolchain
 - `Rscript`
 - `kallisto`
-- `curl` or `wget`
+- native HTTP downloads via `reqwest` are built in
 - R packages: `jsonlite`, `tximport`, `DESeq2`, `rhdf5`
 
 Optional:
@@ -63,7 +66,8 @@ cargo build --release
 ./target/release/rnaa resolve --root /data/my-rnaa-project
 ./target/release/rnaa refs prepare --root /data/my-rnaa-project --organism human --ensembl latest
 ./target/release/rnaa download --root /data/my-rnaa-project --forever
-./target/release/rnaa quant --root /data/my-rnaa-project --preprocess
+./target/release/rnaa quant --root /data/my-rnaa-project --preprocess --preprocess-threads 16 --fastq-retention both
+./target/release/rnaa qc reevaluate --root /data/my-rnaa-project
 ./target/release/rnaa normalize --root /data/my-rnaa-project --design "~ batch + condition"
 ./target/release/rnaa deseq2 --root /data/my-rnaa-project --design "~ batch + condition" --contrast condition A B
 ./target/release/rnaa corr --root /data/my-rnaa-project --model "~ batch + condition" --geneset topvar:5000 --out edges:topk=50
@@ -73,7 +77,7 @@ cargo build --release
 Single-command orchestration:
 
 ```bash
-./target/release/rnaa run --root /data/my-rnaa-project --log-file /data/my-rnaa-project/logs/run-live.log
+./target/release/rnaa run --root /data/my-rnaa-project --preprocess-threads 16 --fastq-retention trimmed --log-file /data/my-rnaa-project/logs/run-live.log
 ```
 
 ## Runtime Behavior
@@ -92,6 +96,47 @@ Paths    /data/my-rnaa-project/metadata/samplesheet.tsv | /data/my-rnaa-project/
 `rnaa status` uses the same project-level stage model, so `normalize` and `corr` are reported as `0/1` or `1/1` instead of fake per-run progress.
 
 Downloaded raw data, prepared references, quant outputs, and DE/corr outputs are persisted on disk and tracked in SQLite. Re-running commands reconciles existing artifacts where possible instead of redoing work blindly.
+
+When preprocessing is enabled, RNAA can prune FASTQ inputs after a successful quantification:
+
+- `--fastq-retention both` keeps original and trimmed FASTQ files
+- `--fastq-retention original` keeps only original FASTQ files
+- `--fastq-retention trimmed` keeps only trimmed FASTQ files
+- `--fastq-retention none` removes both original and trimmed FASTQ files and keeps only downstream quant outputs
+- `--preprocess-threads N` sets per-run `fasterp` threads when preprocessing is enabled
+
+Removed FASTQ files are moved into the project `trash/` area and removed from the active artifact set.
+
+Preprocess QC is parsed into a normalized SQLite table and gated by default before quant/downstream analysis. The built-in defaults are conservative fail-fast thresholds intended to reject catastrophically bad files:
+
+```toml
+[quant.qc_gate]
+min_pass_rate = 0.60
+max_low_quality_rate = 0.30
+max_too_many_n_rate = 0.10
+max_too_short_rate = 0.40
+```
+
+You can override them in `rnaa.toml`, for example:
+
+```toml
+[quant.qc_gate]
+min_pass_rate = 0.8
+max_low_quality_rate = 0.2
+max_too_short_rate = 0.2
+```
+
+Runs that fail the configured QC gate are recorded in `preprocess_qc` with a gate reason and are excluded from quant/downstream processing.
+
+If you change the gate after preprocessing has already been completed, rerun the gate without rerunning `fasterp`:
+
+```bash
+./target/release/rnaa qc reevaluate --root /data/my-rnaa-project
+```
+
+This recomputes QC verdicts from stored preprocess reports, updates run eligibility, and marks project-level normalize/corr outputs as pending when cohort membership changes.
+
+`rnaa status` includes the current skipped count as `runs_skipped_qc`.
 
 For DE and correlation outputs, ENSG-keyed files remain the primary computational outputs. Annotated sidecar outputs are also written where applicable:
 

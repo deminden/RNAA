@@ -31,3 +31,4 @@ rnaa-formats = { path = "../rnaa-formats" }
 
 [dev-dependencies]
 tempfile.workspace = true
+toml.workspace = true

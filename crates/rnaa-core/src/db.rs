@@ -9,9 +9,10 @@ use serde::de::DeserializeOwned;
 use crate::config::{MetadataMergeStrategy, ProjectConfig};
 use crate::model::{
     ArtifactRecord, ContrastSpec, EventRecord, InputRecord, InputType, LibraryLayout,
-    MetadataOverrideRecord, ProjectRecord, RunRecord, SharedBlobRecord,
+    MetadataOverrideRecord, PreprocessQcRecord, ProjectRecord, ProjectStageRecord, RunRecord,
+    SharedBlobRecord,
 };
-use crate::state::RunState;
+use crate::state::{ProjectStageState, RunState};
 use crate::util::now_rfc3339;
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -19,6 +20,18 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0002_shared_store",
         include_str!("../migrations/0002_shared_store.sql"),
+    ),
+    (
+        "0003_project_stages",
+        include_str!("../migrations/0003_project_stages.sql"),
+    ),
+    (
+        "0004_run_metadata",
+        include_str!("../migrations/0004_run_metadata.sql"),
+    ),
+    (
+        "0005_preprocess_qc",
+        include_str!("../migrations/0005_preprocess_qc.sql"),
     ),
 ];
 
@@ -33,6 +46,7 @@ impl Database {
         let db_path = root.join("state.sqlite");
         let conn = Self::connect_path(&db_path)?;
         Self::migrate(&conn)?;
+        Self::backfill_run_metadata(&conn)?;
 
         let project_id = uuid::Uuid::new_v4().to_string();
         let project = ProjectRecord {
@@ -66,6 +80,7 @@ impl Database {
         }
         let conn = Self::connect_path(&db_path)?;
         Self::migrate(&conn)?;
+        Self::backfill_run_metadata(&conn)?;
         let project_id: String = conn
             .query_row("SELECT project_id FROM projects LIMIT 1", [], |row| {
                 row.get(0)
@@ -231,7 +246,15 @@ impl Database {
         let raw = stmt
             .query_row(params![run_accession], parse_raw_run)
             .optional()?;
-        raw.map(TryInto::try_into).transpose()
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        let mut run: RunRecord = raw.try_into()?;
+        let metadata = Self::load_run_metadata_map(&conn, &run.run_accession)?;
+        if !metadata.is_empty() {
+            run.metadata = metadata;
+        }
+        Ok(Some(run))
     }
 
     pub fn list_runs(&self) -> Result<Vec<RunRecord>> {
@@ -258,11 +281,32 @@ impl Database {
             rusqlite::params_from_iter(state_strings.iter()),
             parse_raw_run,
         )?;
+        let metadata_by_run = Self::load_all_run_metadata_maps(&conn)?;
         let mut runs = Vec::new();
         for row in rows {
-            runs.push(row?.try_into()?);
+            let mut run: RunRecord = row?.try_into()?;
+            if let Some(metadata) = metadata_by_run.get(&run.run_accession) {
+                run.metadata = metadata.clone();
+            }
+            runs.push(run);
         }
         Ok(runs)
+    }
+
+    pub fn list_metadata_columns(&self) -> Result<Vec<String>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT field_name
+             FROM run_metadata
+             WHERE project_id = ?1
+             ORDER BY field_name",
+        )?;
+        let rows = stmt.query_map(params![self.project_id], |row| row.get::<_, String>(0))?;
+        let mut columns = Vec::new();
+        for row in rows {
+            columns.push(row?);
+        }
+        Ok(columns)
     }
 
     pub fn set_run_state(
@@ -367,6 +411,111 @@ impl Database {
         Ok(artifacts)
     }
 
+    pub fn delete_artifact(&self, path: &str) -> Result<()> {
+        let conn = self.connect()?;
+        conn.execute("DELETE FROM artifacts WHERE path = ?1", params![path])
+            .with_context(|| format!("failed to delete artifact record {path}"))?;
+        Ok(())
+    }
+
+    pub fn record_preprocess_qc(&self, qc: &PreprocessQcRecord) -> Result<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT INTO preprocess_qc (
+               project_id, run_accession, report_path, mode, threads, total_reads_before,
+               passed_reads, failed_reads, pass_rate, failed_rate, low_quality_reads,
+               low_complexity_reads, too_many_n_reads, too_short_reads, duplicated_reads,
+               duplication_rate, adapter_trimmed_reads, adapter_trimmed_bases, gate_passed,
+               gate_reason, updated_at
+             ) VALUES (
+               ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+               ?17, ?18, ?19, ?20, ?21
+             )
+             ON CONFLICT(project_id, run_accession) DO UPDATE SET
+               report_path = excluded.report_path,
+               mode = excluded.mode,
+               threads = excluded.threads,
+               total_reads_before = excluded.total_reads_before,
+               passed_reads = excluded.passed_reads,
+               failed_reads = excluded.failed_reads,
+               pass_rate = excluded.pass_rate,
+               failed_rate = excluded.failed_rate,
+               low_quality_reads = excluded.low_quality_reads,
+               low_complexity_reads = excluded.low_complexity_reads,
+               too_many_n_reads = excluded.too_many_n_reads,
+               too_short_reads = excluded.too_short_reads,
+               duplicated_reads = excluded.duplicated_reads,
+               duplication_rate = excluded.duplication_rate,
+               adapter_trimmed_reads = excluded.adapter_trimmed_reads,
+               adapter_trimmed_bases = excluded.adapter_trimmed_bases,
+               gate_passed = excluded.gate_passed,
+               gate_reason = excluded.gate_reason,
+               updated_at = excluded.updated_at",
+            params![
+                qc.project_id,
+                qc.run_accession,
+                qc.report_path,
+                qc.mode,
+                qc.threads as i64,
+                qc.total_reads_before as i64,
+                qc.passed_reads as i64,
+                qc.failed_reads as i64,
+                qc.pass_rate,
+                qc.failed_rate,
+                qc.low_quality_reads as i64,
+                qc.low_complexity_reads as i64,
+                qc.too_many_n_reads as i64,
+                qc.too_short_reads as i64,
+                qc.duplicated_reads as i64,
+                qc.duplication_rate,
+                qc.adapter_trimmed_reads as i64,
+                qc.adapter_trimmed_bases as i64,
+                if qc.gate_passed { 1_i64 } else { 0_i64 },
+                qc.gate_reason,
+                qc.updated_at,
+            ],
+        )
+        .with_context(|| format!("failed to record preprocess QC for {}", qc.run_accession))?;
+        Ok(())
+    }
+
+    pub fn get_preprocess_qc(&self, run_accession: &str) -> Result<Option<PreprocessQcRecord>> {
+        let conn = self.connect()?;
+        conn.query_row(
+            "SELECT project_id, run_accession, report_path, mode, threads, total_reads_before,
+                    passed_reads, failed_reads, pass_rate, failed_rate, low_quality_reads,
+                    low_complexity_reads, too_many_n_reads, too_short_reads, duplicated_reads,
+                    duplication_rate, adapter_trimmed_reads, adapter_trimmed_bases, gate_passed,
+                    gate_reason, updated_at
+             FROM preprocess_qc
+             WHERE project_id = ?1 AND run_accession = ?2",
+            params![self.project_id, run_accession],
+            parse_preprocess_qc,
+        )
+        .optional()
+        .context("failed to load preprocess qc")
+    }
+
+    pub fn list_preprocess_qc(&self) -> Result<Vec<PreprocessQcRecord>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            "SELECT project_id, run_accession, report_path, mode, threads, total_reads_before,
+                    passed_reads, failed_reads, pass_rate, failed_rate, low_quality_reads,
+                    low_complexity_reads, too_many_n_reads, too_short_reads, duplicated_reads,
+                    duplication_rate, adapter_trimmed_reads, adapter_trimmed_bases, gate_passed,
+                    gate_reason, updated_at
+             FROM preprocess_qc
+             WHERE project_id = ?1
+             ORDER BY run_accession",
+        )?;
+        let rows = stmt.query_map(params![self.project_id], parse_preprocess_qc)?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row?);
+        }
+        Ok(records)
+    }
+
     pub fn replace_contrasts(&self, contrasts: &[ContrastSpec]) -> Result<()> {
         let mut conn = self.connect()?;
         let tx = conn.transaction()?;
@@ -433,6 +582,56 @@ impl Database {
         Ok(())
     }
 
+    pub fn set_project_stage_state(
+        &self,
+        stage: &str,
+        state: ProjectStageState,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT INTO project_stages (project_id, stage, state, last_error, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(project_id, stage) DO UPDATE SET
+               state = excluded.state,
+               last_error = excluded.last_error,
+               updated_at = excluded.updated_at",
+            params![
+                self.project_id,
+                stage,
+                state.as_str(),
+                last_error,
+                now_rfc3339()
+            ],
+        )
+        .with_context(|| format!("failed to set project stage state for {stage}"))?;
+        Ok(())
+    }
+
+    pub fn get_project_stage_state(&self, stage: &str) -> Result<Option<ProjectStageRecord>> {
+        let conn = self.connect()?;
+        conn.query_row(
+            "SELECT project_id, stage, state, last_error, updated_at FROM project_stages WHERE project_id = ?1 AND stage = ?2",
+            params![self.project_id, stage],
+            parse_project_stage,
+        )
+        .optional()
+        .context("failed to load project stage")
+    }
+
+    pub fn list_project_stage_states(&self) -> Result<Vec<ProjectStageRecord>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            "SELECT project_id, stage, state, last_error, updated_at FROM project_stages WHERE project_id = ?1 ORDER BY stage",
+        )?;
+        let rows = stmt.query_map(params![self.project_id], parse_project_stage)?;
+        let mut stages = Vec::new();
+        for row in rows {
+            stages.push(row?);
+        }
+        Ok(stages)
+    }
+
     pub fn list_events(&self, limit: usize) -> Result<Vec<EventRecord>> {
         let conn = self.connect()?;
         let mut stmt = conn.prepare(
@@ -496,9 +695,14 @@ impl Database {
             "SELECT project_id, study_accession, source_study_accession, run_accession, sample_accession, experiment_accession, library_layout, instrument_platform, instrument_model, remote_files_json, metadata_json, state, last_error, updated_at FROM runs ORDER BY run_accession",
         )?;
         let rows = stmt.query_map([], parse_raw_run)?;
+        let metadata_by_run = Self::load_all_run_metadata_maps(&conn)?;
         let mut runs = Vec::new();
         for row in rows {
-            runs.push(row?.try_into()?);
+            let mut run: RunRecord = row?.try_into()?;
+            if let Some(metadata) = metadata_by_run.get(&run.run_accession) {
+                run.metadata = metadata.clone();
+            }
+            runs.push(run);
         }
         Ok(runs)
     }
@@ -559,6 +763,7 @@ impl Database {
             ],
         )
         .with_context(|| format!("failed to upsert run {}", run.run_accession))?;
+        Self::replace_run_metadata_tx(conn, &run.project_id, &run.run_accession, &run.metadata)?;
         Ok(())
     }
 
@@ -600,6 +805,121 @@ impl Database {
                     params![version, now_rfc3339()],
                 )?;
             }
+        }
+        Ok(())
+    }
+
+    fn replace_run_metadata_tx(
+        conn: &Connection,
+        project_id: &str,
+        run_accession: &str,
+        metadata: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        conn.execute(
+            "DELETE FROM run_metadata WHERE project_id = ?1 AND run_accession = ?2",
+            params![project_id, run_accession],
+        )
+        .with_context(|| format!("failed to clear normalized metadata for {run_accession}"))?;
+        if metadata.is_empty() {
+            return Ok(());
+        }
+        let mut stmt = conn.prepare(
+            "INSERT INTO run_metadata (project_id, run_accession, field_name, field_value, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        let updated_at = now_rfc3339();
+        for (field_name, field_value) in metadata {
+            stmt.execute(params![
+                project_id,
+                run_accession,
+                field_name,
+                field_value,
+                updated_at,
+            ])
+            .with_context(|| {
+                format!("failed to write normalized metadata {field_name} for {run_accession}")
+            })?;
+        }
+        Ok(())
+    }
+
+    fn load_run_metadata_map(
+        conn: &Connection,
+        run_accession: &str,
+    ) -> Result<std::collections::BTreeMap<String, String>> {
+        let mut stmt = conn.prepare(
+            "SELECT field_name, field_value
+             FROM run_metadata
+             WHERE run_accession = ?1
+             ORDER BY field_name",
+        )?;
+        let rows = stmt.query_map(params![run_accession], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut metadata = std::collections::BTreeMap::new();
+        for row in rows {
+            let (field_name, field_value) = row?;
+            metadata.insert(field_name, field_value);
+        }
+        Ok(metadata)
+    }
+
+    fn load_all_run_metadata_maps(
+        conn: &Connection,
+    ) -> Result<std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>>
+    {
+        let mut stmt = conn.prepare(
+            "SELECT run_accession, field_name, field_value
+             FROM run_metadata
+             ORDER BY run_accession, field_name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut metadata_by_run = std::collections::BTreeMap::new();
+        for row in rows {
+            let (run_accession, field_name, field_value) = row?;
+            metadata_by_run
+                .entry(run_accession)
+                .or_insert_with(std::collections::BTreeMap::new)
+                .insert(field_name, field_value);
+        }
+        Ok(metadata_by_run)
+    }
+
+    fn backfill_run_metadata(conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare(
+            "SELECT project_id, run_accession, metadata_json
+             FROM runs
+             WHERE NOT EXISTS (
+               SELECT 1
+               FROM run_metadata
+               WHERE run_metadata.project_id = runs.project_id
+                 AND run_metadata.run_accession = runs.run_accession
+             )
+             ORDER BY run_accession",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (project_id, run_accession, metadata_json) = row?;
+            let metadata =
+                from_json_text::<std::collections::BTreeMap<String, String>>(&metadata_json)
+                    .with_context(|| {
+                        format!(
+                            "failed to backfill normalized metadata for legacy run {run_accession}"
+                        )
+                    })?;
+            Self::replace_run_metadata_tx(conn, &project_id, &run_accession, &metadata)?;
         }
         Ok(())
     }
@@ -718,6 +1038,53 @@ fn parse_event(row: &Row<'_>) -> rusqlite::Result<EventRecord> {
     })
 }
 
+fn parse_project_stage(row: &Row<'_>) -> rusqlite::Result<ProjectStageRecord> {
+    let state_text: String = row.get(2)?;
+    let state = ProjectStageState::from_str(&state_text).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(
+            2,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                err.to_string(),
+            )),
+        )
+    })?;
+    Ok(ProjectStageRecord {
+        project_id: row.get(0)?,
+        stage: row.get(1)?,
+        state,
+        last_error: row.get(3)?,
+        updated_at: row.get(4)?,
+    })
+}
+
+fn parse_preprocess_qc(row: &Row<'_>) -> rusqlite::Result<PreprocessQcRecord> {
+    Ok(PreprocessQcRecord {
+        project_id: row.get(0)?,
+        run_accession: row.get(1)?,
+        report_path: row.get(2)?,
+        mode: row.get(3)?,
+        threads: row.get::<_, i64>(4)? as u64,
+        total_reads_before: row.get::<_, i64>(5)? as u64,
+        passed_reads: row.get::<_, i64>(6)? as u64,
+        failed_reads: row.get::<_, i64>(7)? as u64,
+        pass_rate: row.get(8)?,
+        failed_rate: row.get(9)?,
+        low_quality_reads: row.get::<_, i64>(10)? as u64,
+        low_complexity_reads: row.get::<_, i64>(11)? as u64,
+        too_many_n_reads: row.get::<_, i64>(12)? as u64,
+        too_short_reads: row.get::<_, i64>(13)? as u64,
+        duplicated_reads: row.get::<_, i64>(14)? as u64,
+        duplication_rate: row.get(15)?,
+        adapter_trimmed_reads: row.get::<_, i64>(16)? as u64,
+        adapter_trimmed_bases: row.get::<_, i64>(17)? as u64,
+        gate_passed: row.get::<_, i64>(18)? != 0,
+        gate_reason: row.get(19)?,
+        updated_at: row.get(20)?,
+    })
+}
+
 fn from_json_text<T: DeserializeOwned>(text: &str) -> Result<T> {
     serde_json::from_str(text).map_err(|err| anyhow!("failed to parse JSON '{text}': {err}"))
 }
@@ -799,6 +1166,112 @@ mod tests {
     }
 
     #[test]
+    fn normalized_run_metadata_is_persisted_and_queryable() {
+        let temp = TempDir::new().unwrap();
+        let config = ProjectConfig::default();
+        let db = Database::create(temp.path(), &config).unwrap();
+        let run = RunRecord {
+            project_id: db.project_id().to_string(),
+            study_accession: "SRP1".to_string(),
+            source_study_accession: Some("PRJNA1".to_string()),
+            run_accession: "SRR1".to_string(),
+            sample_accession: Some("SRS1".to_string()),
+            experiment_accession: Some("SRX1".to_string()),
+            library_layout: LibraryLayout::Paired,
+            instrument_platform: Some("ILLUMINA".to_string()),
+            instrument_model: Some("HiSeq".to_string()),
+            remote_files: vec![],
+            metadata: BTreeMap::from([
+                ("condition".to_string(), "A".to_string()),
+                ("batch".to_string(), "B1".to_string()),
+                (
+                    "ena_library_source".to_string(),
+                    "TRANSCRIPTOMIC".to_string(),
+                ),
+            ]),
+            state: RunState::Resolved,
+            last_error: None,
+            updated_at: now_rfc3339(),
+        };
+        db.upsert_run(&run).unwrap();
+
+        let persisted = db.get_run("SRR1").unwrap().unwrap();
+        assert_eq!(
+            persisted.metadata.get("condition").map(String::as_str),
+            Some("A")
+        );
+        assert_eq!(
+            persisted.metadata.get("batch").map(String::as_str),
+            Some("B1")
+        );
+        assert_eq!(
+            db.list_metadata_columns().unwrap(),
+            vec![
+                "batch".to_string(),
+                "condition".to_string(),
+                "ena_library_source".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_metadata_json_is_backfilled_into_normalized_table_on_open() {
+        let temp = TempDir::new().unwrap();
+        let config = ProjectConfig::default();
+        let db = Database::create(temp.path(), &config).unwrap();
+        let run = RunRecord {
+            project_id: db.project_id().to_string(),
+            study_accession: "SRP1".to_string(),
+            source_study_accession: Some("PRJNA1".to_string()),
+            run_accession: "SRR1".to_string(),
+            sample_accession: Some("SRS1".to_string()),
+            experiment_accession: Some("SRX1".to_string()),
+            library_layout: LibraryLayout::Paired,
+            instrument_platform: Some("ILLUMINA".to_string()),
+            instrument_model: Some("HiSeq".to_string()),
+            remote_files: vec![],
+            metadata: BTreeMap::from([
+                ("condition".to_string(), "A".to_string()),
+                ("donor".to_string(), "D1".to_string()),
+            ]),
+            state: RunState::Resolved,
+            last_error: None,
+            updated_at: now_rfc3339(),
+        };
+        db.upsert_run(&run).unwrap();
+
+        let conn = Connection::open(db.path()).unwrap();
+        conn.execute(
+            "DELETE FROM run_metadata WHERE project_id = ?1 AND run_accession = ?2",
+            params![db.project_id(), "SRR1"],
+        )
+        .unwrap();
+        let deleted_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM run_metadata WHERE run_accession = ?1",
+                params!["SRR1"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(deleted_count, 0);
+
+        let reopened = Database::open(temp.path()).unwrap();
+        let persisted = reopened.get_run("SRR1").unwrap().unwrap();
+        assert_eq!(
+            persisted.metadata.get("condition").map(String::as_str),
+            Some("A")
+        );
+        assert_eq!(
+            persisted.metadata.get("donor").map(String::as_str),
+            Some("D1")
+        );
+        assert_eq!(
+            reopened.list_metadata_columns().unwrap(),
+            vec!["condition".to_string(), "donor".to_string()]
+        );
+    }
+
+    #[test]
     fn artifact_blob_linkage_is_persisted() {
         let temp = TempDir::new().unwrap();
         let config = ProjectConfig::default();
@@ -840,5 +1313,21 @@ mod tests {
 
         let loaded_blob = db.get_shared_blob("sha256:abc123").unwrap().unwrap();
         assert_eq!(loaded_blob.checksum, "abc123");
+    }
+
+    #[test]
+    fn project_stage_states_are_persisted() {
+        let temp = TempDir::new().unwrap();
+        let config = ProjectConfig::default();
+        let db = Database::create(temp.path(), &config).unwrap();
+
+        db.set_project_stage_state("normalize", ProjectStageState::Running, None)
+            .unwrap();
+        db.set_project_stage_state("normalize", ProjectStageState::Failed, Some("interrupted"))
+            .unwrap();
+
+        let stage = db.get_project_stage_state("normalize").unwrap().unwrap();
+        assert_eq!(stage.state, ProjectStageState::Failed);
+        assert_eq!(stage.last_error.as_deref(), Some("interrupted"));
     }
 }

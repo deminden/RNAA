@@ -2,9 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use fasterp::wasm::{
-    WasmConfig, process_paired_end, process_single_end, version as fasterp_version,
-};
+use fasterp::{process_paths, version as fasterp_version};
 use rnaa_core::config::ProjectConfig;
 use rnaa_core::model::{ArtifactKind, PreprocessArtifacts, RunRecord, VerifiedFile};
 use rnaa_core::paths::ProjectPaths;
@@ -72,45 +70,27 @@ impl Preprocessor for FasterpInProcessPreprocessor {
             });
         }
 
-        let wasm_config = WasmConfig::new();
-        let (passed_reads, failed_reads) = if let Some(read2) = read2 {
-            let input1 = fs::read(&read1.path)
-                .with_context(|| format!("failed to read {}", read1.path.display()))?;
-            let input2 = fs::read(&read2.path)
-                .with_context(|| format!("failed to read {}", read2.path.display()))?;
-            let result = process_paired_end(&input1, &input2, &wasm_config).map_err(|err| {
-                anyhow!(
-                    "fasterp in-process paired preprocessing failed for {}: {err:?}",
-                    run.run_accession
-                )
-            })?;
-
-            fs::write(&out_read1, result.output1())
-                .with_context(|| format!("failed to write {}", out_read1.display()))?;
-            let out_read2_path = out_read2
-                .as_ref()
-                .ok_or_else(|| anyhow!("paired run missing read2 output path"))?;
-            fs::write(out_read2_path, result.output2())
-                .with_context(|| format!("failed to write {}", out_read2_path.display()))?;
-            fs::write(&report_json, result.json_report())
-                .with_context(|| format!("failed to write {}", report_json.display()))?;
-            (result.passed_reads(), result.failed_reads())
-        } else {
-            let input1 = fs::read(&read1.path)
-                .with_context(|| format!("failed to read {}", read1.path.display()))?;
-            let result = process_single_end(&input1, &wasm_config).map_err(|err| {
-                anyhow!(
-                    "fasterp in-process single-end preprocessing failed for {}: {err:?}",
-                    run.run_accession
-                )
-            })?;
-
-            fs::write(&out_read1, result.output())
-                .with_context(|| format!("failed to write {}", out_read1.display()))?;
-            fs::write(&report_json, result.json_report())
-                .with_context(|| format!("failed to write {}", report_json.display()))?;
-            (result.passed_reads(), result.failed_reads())
-        };
+        let input1 = read1.path.display().to_string();
+        let output1 = out_read1.display().to_string();
+        let input2 = read2.map(|item| item.path.display().to_string());
+        let output2 = out_read2.as_ref().map(|path| path.display().to_string());
+        let result = process_paths(
+            &input1,
+            &output1,
+            input2.as_deref(),
+            output2.as_deref(),
+            config.quant.preprocess_threads,
+        )
+        .map_err(|err| {
+            anyhow!(
+                "fasterp native preprocessing failed for {}: {err:#}",
+                run.run_accession
+            )
+        })?;
+        fs::write(&report_json, result.json_report)
+            .with_context(|| format!("failed to write {}", report_json.display()))?;
+        let passed_reads = result.passed_reads;
+        let failed_reads = result.failed_reads;
 
         if !is_cached_output_ready(&out_read1, out_read2.as_deref(), &report_json) {
             bail!(

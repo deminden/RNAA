@@ -2,15 +2,15 @@
 
 ## Purpose
 
-This document defines the next development stages for RNAA after the current foundation work:
+This document defines the next development stages for RNAA from the current repository state:
 
-- workspace scaffolding exists
-- SQLite-backed project state exists
-- `init`, `add`, `resolve`, `status`, `doctor`, and `download` are functional
-- ENA resolution works for runs/studies/projects and generates a canonical samplesheet
+- workspace scaffolding exists and the CLI is usable
+- SQLite-backed project state, manifests, and artifact tracking exist
+- `init`, `add`, `resolve`, `status`, `doctor`, `download`, `refs`, `quant`, `normalize`, `deseq2`, `corr`, and `run` are implemented
+- ENA resolution works for runs, studies, projects, and sample selectors and generates a canonical samplesheet
 - the downloader is restart-safe, manifest-driven, and independent of later stages
-- `refs`, `quant`, `deseq2`, `corr`, and `run` are now implemented, but not yet hardened enough for production use
-- `export`, `survey`, cleanup execution, extraction fallback, and worker-budget scheduling are still incomplete
+- restart reconciliation exists for quant, normalize/DE, and corr
+- `export`, `survey`, cleanup execution, extraction fallback, crash-recovery sweeps, and a real worker-budget scheduler are still incomplete
 
 The objective is not just to "finish features". The objective is to make RNAA credible as a server-first, restart-safe survey engine that can survive long-running public RNA-seq ingestion workflows without corrupting state or locking us into temporary implementations.
 
@@ -75,11 +75,15 @@ This plan now assumes a storage architecture change:
 - Accept explicit sample accessions plus metadata predicates for include/exclude filters.
 - Persist selectors as first-class inputs so cohort definitions are reproducible and rerunnable.
 
-8. Add optional FASTQ preprocessing with `fasterp` before quant.
+8. Make FASTQ preprocessing with `fasterp` a first-class pipeline stage before quant.
 - `fasterp` is a trimming/QC preprocessor, not an aligner.
 - Keep raw downloaded FASTQ immutable; write trimmed FASTQ as derived artifacts.
 - Persist preprocessing reports (`json`, optional `html`) as provenance artifacts.
 - Include preprocessing tool/version/flags in quant cache identity so reuse is correctness-safe.
+- Treat preprocessing as part of the main run graph, not a side feature. The default orchestration path should understand:
+  - `VERIFIED -> PREPROCESS_RUNNING -> PREPROCESS_DONE -> QUANT_RUNNING`
+  - direct `VERIFIED -> QUANT_RUNNING` only when preprocessing is disabled
+- Scheduler decisions must budget preprocessing together with quant because both are run-parallel CPU stages.
 
 ## Current State Snapshot
 
@@ -92,37 +96,37 @@ This plan now assumes a storage architecture change:
 - Metadata overrides merge into resolved metadata.
 - Canonical samplesheet and editable column map are generated.
 - Download worker uses `curl`/`wget`, `.part` files, retries, verification, and manifest output.
-- Reference preparation is wired through the CLI and records reference artifacts.
+- Reference preparation is wired through the CLI, uses cached GENCODE presets, and records reference artifacts.
+- `fasterp` preprocessing exists and writes derived artifacts before quantification when enabled.
 - Quantification works through the Rust wrapper plus `Rscript` plus kallisto.
-- DESeq2 works through the Rust wrapper plus `Rscript` plus tximport/DESeq2.
-- Correlation works through Rust residualization plus linked `mincorr`.
-- `rnaa run` orchestrates the implemented stages sequentially.
-- Tests exist for resolver parsing, metadata merge behavior, state persistence, and download command templating.
+- Normalize and DESeq2 work through the Rust wrapper plus `Rscript` plus tximport/DESeq2.
+- Correlation works through Rust residualization plus linked `mincorr`; module-level enrichment via `rsfgsea` is present.
+- `rnaa run` overlaps download and quant and reconciles existing downstream outputs.
+- Tests exist for resolver parsing, metadata merge behavior, state persistence, download templating, normalize workflow, and normalize -> corr -> module enrichment workflow.
 
 ### Incomplete or still weak
 
 - Export and survey are still CLI stubs.
 - Cleanup policy exists in config and CLI flags, but real move-to-trash plus purge execution is not complete.
 - Extraction fallback (`xsra` and `vdb-native`) is still not implemented.
-- Project-stage state is still overloaded onto per-run state for DE and correlation.
-- Input granularity is still accession-centric (`RUN`, `STUDY`, `PROJECT`) with no sample-level selector contract.
-- Reference preparation, quantification, DESeq2, and correlation still need live integration tests and harder failure-path coverage.
-- There is no crash-recovery sweep yet for stale `*_RUNNING` states after abrupt process death.
-- There is no worker-budget scheduler yet; only download is truly parallel at the RNAA scheduler level.
-- The repo contains nested `.git` directories under crate folders from `cargo new`; that should be cleaned before real repository hygiene work proceeds.
-- There is still no real `README.md` or `docs/systemd/` operational surface for a first public commit.
+- Project-stage state is still overloaded onto per-run state for normalize, DE, and correlation.
+- Crash-recovery is incomplete: there is no sweep that turns stale `*_RUNNING` states into retryable interrupted states after abrupt termination.
+- Reference preparation, quantification, DESeq2, and correlation still need deeper integration tests and harder failure-path coverage.
+- There is no real worker-budget scheduler yet. `run` overlaps download and quant, but DE/corr scheduling is still simple and stage budgets are not explicit.
+- Preprocessing is implemented, but it is not yet modeled as a first-class scheduler stage in the orchestration plan.
+- Shared artifact storage is only partially realized; ownership, pinning, and GC remain unfinished.
 
 ## Parallelization Snapshot
 
 The current execution model is mixed:
 
 - Download is parallel across runs. `rnaa download --concurrency N` spawns `N` Rust worker threads, and each worker processes one run at a time.
-- Quant is not parallel across runs yet. The RNAA CLI loops through runs serially, and each run gets one `Rscript`/kallisto process with `config.quant.threads` threads.
+- Preprocessing and quant can run per-run with bounded worker pools, but the orchestration rules are still simple.
 - DESeq2 is single-project and single-invocation from RNAA. That is correct at the scheduler level, but RNAA does not yet explicitly cap BLAS/OpenMP threads.
-- Correlation is single-project from RNAA. Residualization is currently serial over genes, while `mincorr` itself uses internal parallelism.
-- `rnaa run` is a sequential stage orchestrator, not a global worker-budget scheduler.
+- Correlation is single-project from RNAA. Residualization and `mincorr` execution still need explicit bounded worker ownership.
+- `rnaa run` is a pipeline orchestrator, but not yet a real global worker-budget scheduler.
 
-If you give the current code a 100-worker host today, only download can use 100 RNAA-managed workers. Quant can use 100 threads only by giving a single run all 100 kallisto threads, which is not the right long-term strategy. DESeq2 and correlation each run as one project job.
+If you give the current code a 100-worker host today, RNAA can overlap I/O and run-parallel compute, but it still does not enforce a single budget across preprocessing, quant, DESeq2, and correlation. That is the remaining scheduler gap.
 
 ## Parallelization Strategy
 
@@ -161,8 +165,10 @@ The correct strategy is not "every stage gets all workers". The correct strategy
   - few runnable runs: increase per-run threads gradually, but cap a single kallisto job well below 100
 - The goal is 100 busy workers in aggregate, not 100 threads per run.
 
-4. Extraction and FASTQ-prep should behave like quant-adjacent run-parallel work.
+4. Extraction and preprocessing should behave like quant-adjacent run-parallel work.
 - `xsra` or future native extraction should use the same CPU pool family as quant.
+- `fasterp` must be treated as part of the main run pipeline, not a side option.
+- Default preprocessing concurrency should be bounded and coordinated with quant so the two stages do not oversubscribe the machine.
 - Default to a smaller concurrency than quant when compression is involved.
 
 5. DESeq2 should remain single-project and non-parallel at the RNAA scheduler level.
@@ -206,62 +212,60 @@ For a 100-worker Linux host, the default strategy should be:
 
 - reserve `4` workers for OS, SQLite, logging, and control-plane work
 - allow download to use a small independent I/O pool, for example `1` or `2`, with manual override if needed
+- let preprocessing and quant share the CPU pool as run-parallel stages:
+  - default `preprocess.max_concurrent_runs = 6`
+  - default `quant.threads_per_run = 8`
+  - default `quant.max_concurrent_runs = 12`
+  - the scheduler should reduce preprocess concurrency when quant is already saturating the machine
 - let quant consume the CPU pool aggressively by run-level parallelism:
   - default `threads_per_run = 8`
   - default `max_concurrent_runs = floor(96 / 8) = 12`
   - if fewer than 12 runs are ready, increase per-run threads up to a cap such as `16`
 - allow the downloader and quantifier to run at the same time:
-  - example steady state: `2` download workers plus `12 x 8-thread` quant jobs
-  - this is valid because download is mostly I/O bound and quant is CPU bound
+  - example steady state: `2` download workers plus a mix of preprocess and quant jobs, bounded to the remaining CPU budget
+  - this is valid because download is mostly I/O bound while preprocess and quant are CPU bound
 - run DESeq2 as exactly one project job with a hard thread cap such as `8` or `16`
 - run correlation as exactly one project job with an explicit pool such as `48` or `64`
 
 That gives the behavior you want:
 
 - alignment uses the whole machine in aggregate
+- preprocessing is part of the main data path instead of an afterthought
 - downloads keep progressing while alignment is already processing earlier runs
 - DESeq2 does not explode into unsafe parallel jobs
 - other stages use bounded, stage-appropriate worker counts
 - run-parallel work happens where the contracts are naturally per-run
 
-## First Commit Readiness Gaps
+## Priority Gaps
 
-The first commit should not present RNAA as production-ready yet. The minimum things still not prepared for a credible first public commit are:
+The next work should focus on the things that still block RNAA from being convincingly production-grade.
 
-1. Repository hygiene
-- remove nested crate-local `.git` directories under `crates/`
-- decide whether this is the actual top-level repo root and normalize git state
-
-2. Operator surface
-- add a real `README.md`
-- add a real quickstart that matches the implemented commands
-- add `docs/systemd/` examples for the download worker and orchestration
-
-3. State model correctness
+1. State model correctness
 - add project-level stage state instead of overloading run-level state for DE and correlation
 - add startup recovery that converts stale `*_RUNNING` states into retryable interrupted failures
 - expand shared artifact-store linkage into full ownership, pinning, and GC semantics (basic blob linkage is now in place)
 
-4. Worker scheduling
+2. Worker scheduling
 - implement the worker-budget model described above
-- ✅ implemented: download and quant now overlap by default in `rnaa run`
+- make preprocessing a first-class scheduled stage in `run`
 - add explicit thread caps for DESeq2 and correlation
-- ✅ implemented: quant supports bounded run-parallel execution via worker pool (`[quant].workers`, `rnaa quant --workers`)
+- publish worker assignments and queue state in progress reporting
 
-5. Honest feature surface
-- either implement cleanup, export, survey, and extraction, or clearly leave them out of the first public promise
+3. Honest feature surface
+- either implement cleanup, export, survey, and extraction, or clearly leave them out of the public promise
 - do not keep CLI flags that imply working behavior if the underlying stage is still a placeholder
 
-6. Testing
+4. Testing
 - add integration tests for:
   - refs prepare
+  - preprocess happy path
   - quant wrapper happy path
   - DESeq2 happy path
   - correlation happy path
   - end-to-end `rnaa run`
 - add restart/interruption tests for download, quant, and project-level stages
 
-7. Hardening
+5. Hardening
 - add reference-build locking so concurrent processes cannot trample shared cache creation
 - add output guardrails for dense correlation outputs
 - verify manifest completeness and failure-mode consistency across stages
@@ -272,84 +276,15 @@ The first commit should not present RNAA as production-ready yet. The minimum th
 The smart path is:
 
 1. Implement shared artifact store contracts and schema additions.
-2. Extend resolver/input contracts for sample-scoped cohort selection.
-3. Finish reference preparation and CLI wiring against shared storage.
-4. Finish per-run quantification via R + kallisto with HDF5-first canonical outputs and cache-key reuse.
-5. Add optional `fasterp` preprocessing contracts and CLI/config wiring.
-6. Finish project-level DESeq2 with HDF5-first internal outputs.
-7. Finish adjusted correlation in Rust + `mincorr` with HDF5 matrix contracts.
-8. Finish orchestration, export, and survey UX.
-9. Add extraction and cleanup policy completion.
-10. Harden operational behavior, tests, docs, and release packaging.
+2. Add project-level stage state and crash-recovery sweeps.
+3. Implement a real worker-budget scheduler for download, preprocessing, quant, DE, and corr.
+4. Finish reference preparation and locking against shared storage.
+5. Finish per-run preprocessing and quant reuse contracts with stable cache keys.
+6. Finish project-level DESeq2 and correlation hardening.
+7. Finish export, survey, extraction, and cleanup UX.
+8. Harden operational behavior, tests, docs, and release packaging.
 
-This sequence is correct because each later stage depends on validated outputs from the earlier one, and because shared storage identity plus HDF5 contracts must be stable before high-volume quant and cohort analysis.
-
-## Stage 1: Foundation Hardening And Repo Hygiene
-
-### Goal
-
-Turn the current scaffold into a clean base before deeper pipeline work multiplies complexity.
-
-### Tasks
-
-- Remove nested `.git` directories under `crates/` created by `cargo new`.
-- Add a real top-level repository if one is intended here.
-- Normalize root docs structure:
-  - `README.md`
-  - `docs/architecture.md`
-  - `docs/state-machine.md`
-  - `docs/artifact-contracts.md`
-- Add CLI smoke tests for:
-  - `init`
-  - `add`
-  - `resolve`
-  - `status`
-  - `doctor`
-  - `download`
-- Tighten `doctor` output into machine-readable and human-readable sections.
-- Add a stable version field to manifests and start documenting compatibility expectations.
-- Add helper utilities for atomic write patterns used by future stages.
-
-### Why this matters
-
-Without hygiene now, every next stage will repeat avoidable mistakes:
-
-- inconsistent manifest writing
-- inconsistent error semantics
-- ad hoc path handling
-- poor operator experience on Linux servers
-
-### Acceptance criteria
-
-- `cargo check` and `cargo test` are clean with no avoidable warnings.
-- Core CLI commands have regression coverage.
-- Repository layout no longer contains accidental nested git repositories.
-
-## Stage 1B: Sample-Scoped Cohort Selection
-
-### Goal
-
-Allow users to build cohorts from selected samples, not only full projects/studies/runs.
-
-### Tasks
-
-- Extend `InputType` and resolver contracts to support sample accession inputs.
-- Add CLI support for sample-targeted ingestion:
-  - `rnaa add --id <sample_accession>`
-  - `rnaa add --id <study/project> --include-sample <sample_accession>`
-  - `rnaa add --id <study/project> --where '<predicate>'` for metadata-based filtering
-- Persist selectors as immutable input records so the same command can reproduce the same cohort definition.
-- Make include/exclude selection deterministic and auditable in resolve manifests.
-- Add resolver validation and clear error modes for:
-  - no runs matched the selectors
-  - sample accessions not found
-  - conflicting include/exclude rules
-- Add tests for sample-only cohorts and mixed selector + accession cohorts.
-
-### Acceptance criteria
-
-- Users can add an explicit subset of samples from large accessions without post-hoc manual edits.
-- Re-running resolve with the same selectors produces the same run set (modulo upstream accession drift, reported in manifests).
+This sequence is correct because the remaining risk is no longer basic feature existence. The remaining risk is state-model correctness, scheduler correctness, and operational hardening across long-running server workflows.
 
 ## Stage 2: Reference Preparation As A Production-Ready Stage
 
