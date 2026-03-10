@@ -4,5 +4,6 @@ pub mod deseq2;
 pub mod download;
 pub mod preprocess;
 pub mod quant;
+pub mod r_scripts;
 pub mod refs;
 pub mod resolver;

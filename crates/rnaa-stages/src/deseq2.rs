@@ -12,6 +12,8 @@ use rnaa_core::traits::DifferentialExpression;
 use rnaa_core::util::{command_version, file_size, now_rfc3339, write_json_pretty};
 use serde_json::json;
 
+use crate::r_scripts::resolve_r_script;
+
 #[derive(Debug, Clone, Default)]
 pub struct Deseq2Runner;
 
@@ -169,24 +171,7 @@ impl DifferentialExpression for Deseq2Runner {
 }
 
 fn find_deseq2_script(paths: &ProjectPaths) -> Result<PathBuf> {
-    let mut candidates = Vec::new();
-    candidates.push(paths.root.join("r").join("tximport_deseq2.R"));
-    if let Ok(dir) = std::env::var("RNAA_R_SCRIPTS_DIR") {
-        candidates.push(PathBuf::from(dir).join("tximport_deseq2.R"));
-    }
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("r")
-            .join("tximport_deseq2.R"),
-    );
-    for candidate in candidates {
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    bail!(
-        "DESeq2 script not found; checked project r/tximport_deseq2.R, RNAA_R_SCRIPTS_DIR, and bundled source path"
+    resolve_r_script(paths, "tximport_deseq2.R").context(
+        "DESeq2 script could not be resolved from RNAA_R_SCRIPTS_DIR or the embedded payload",
     )
 }

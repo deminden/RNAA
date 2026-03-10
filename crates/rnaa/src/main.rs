@@ -471,6 +471,7 @@ fn cmd_resolve(
 
 fn cmd_status(paths: &ProjectPaths, db: &Database, config: &ProjectConfig) -> Result<()> {
     recover_interrupted_work(db)?;
+    reconcile_verified_download_state(db)?;
     let project = db.project()?;
     let counts = db.state_counts()?;
     let inputs = db.list_inputs()?;
@@ -778,6 +779,7 @@ fn cmd_quant(
     args: QuantArgs,
 ) -> Result<()> {
     recover_interrupted_work(db)?;
+    reconcile_verified_download_state(db)?;
     if let Some(engine) = args.engine {
         config.quant.engine = engine;
         config.save(&paths.config_path)?;
@@ -1132,6 +1134,55 @@ fn reconcile_quant_state(
                 "quantification reconciled from existing outputs",
             )?;
         }
+    }
+    Ok(())
+}
+
+fn reconcile_verified_download_state(db: &Database) -> Result<()> {
+    let runs = db.list_runs()?;
+    let mut reconciled = 0_u64;
+    for run in runs {
+        if matches!(
+            run.state,
+            RunState::Verified
+                | RunState::PreprocessRunning
+                | RunState::PreprocessDone
+                | RunState::PreprocessFailed
+                | RunState::QuantRunning
+                | RunState::QuantDone
+                | RunState::QuantFailed
+                | RunState::DeRunning
+                | RunState::DeDone
+                | RunState::DeFailed
+                | RunState::CorrRunning
+                | RunState::CorrDone
+                | RunState::CorrFailed
+                | RunState::Cleaned
+        ) {
+            continue;
+        }
+        let artifacts = db.list_artifacts_for_run(Some(&run.run_accession))?;
+        let has_verified_raw = artifacts.iter().any(|artifact| {
+            matches!(
+                artifact.kind,
+                ArtifactKind::FastqR1
+                    | ArtifactKind::FastqR2
+                    | ArtifactKind::FastqSingle
+                    | ArtifactKind::Sra
+            )
+        });
+        if has_verified_raw {
+            db.set_run_state(&run.run_accession, RunState::Verified, None)?;
+            reconciled += 1;
+        }
+    }
+    if reconciled > 0 {
+        db.append_event(
+            "download",
+            None,
+            "download state reconciled from existing artifacts",
+            json!({ "runs_reconciled": reconciled }),
+        )?;
     }
     Ok(())
 }
@@ -2262,6 +2313,7 @@ fn cmd_run(
         db.set_project_config(&config)?;
     }
     recover_interrupted_work(db)?;
+    reconcile_verified_download_state(db)?;
     cmd_resolve(paths, db, &config, ResolveArgs { force: false })?;
     let reference = EnsemblReferenceManager::new()?.ensure_reference(paths, &config)?;
     reconcile_quant_state(db, paths, &config, &reference)?;
@@ -4238,8 +4290,13 @@ fn validate_design_formula(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_preprocess_qc_report, ratio};
-    use rnaa_core::PreprocessQcGate;
+    use super::{parse_preprocess_qc_report, ratio, reconcile_verified_download_state};
+    use rnaa_core::config::ProjectConfig;
+    use rnaa_core::model::{ArtifactKind, ArtifactRecord, LibraryLayout, RunRecord};
+    use rnaa_core::state::RunState;
+    use rnaa_core::util::{compute_sha256, file_size, now_rfc3339};
+    use rnaa_core::{Database, PreprocessQcGate, ProjectPaths};
+    use std::collections::BTreeMap;
     use std::fs;
     use tempfile::TempDir;
 
@@ -4334,5 +4391,60 @@ mod tests {
         assert_eq!(gate.max_too_short_rate, Some(0.40));
         assert_eq!(gate.max_low_complexity_rate, None);
         assert_eq!(gate.max_duplication_rate, None);
+    }
+
+    #[test]
+    fn reconciles_existing_raw_artifacts_back_to_verified() {
+        let temp = TempDir::new().expect("failed to create tempdir");
+        let root = temp.path();
+        let config = ProjectConfig::default();
+        let db = Database::create(root, &config).expect("failed to create database");
+        let paths = ProjectPaths::new(root);
+        let project_id = db.project().expect("failed to load project").project_id;
+        let run = RunRecord {
+            project_id: project_id.clone(),
+            study_accession: "SRPTEST".to_string(),
+            source_study_accession: None,
+            run_accession: "RUN1".to_string(),
+            sample_accession: Some("SAMP1".to_string()),
+            experiment_accession: Some("EXP1".to_string()),
+            library_layout: LibraryLayout::Single,
+            instrument_platform: Some("ILLUMINA".to_string()),
+            instrument_model: Some("TEST".to_string()),
+            remote_files: Vec::new(),
+            metadata: BTreeMap::new(),
+            state: RunState::Resolved,
+            last_error: None,
+            updated_at: now_rfc3339(),
+        };
+        db.upsert_run(&run).expect("failed to upsert run");
+
+        let raw_dir = paths.raw_run_dir("RUN1");
+        fs::create_dir_all(&raw_dir).expect("failed to create raw dir");
+        let fastq = raw_dir.join("RUN1.fastq");
+        fs::write(&fastq, b"@r1\nACGT\n+\n!!!!\n").expect("failed to write fastq");
+        db.record_artifact(&ArtifactRecord {
+            project_id,
+            run_accession: Some("RUN1".to_string()),
+            kind: ArtifactKind::FastqSingle,
+            path: fastq.display().to_string(),
+            blob_id: None,
+            shared_path: None,
+            checksum_type: "sha256".to_string(),
+            checksum: compute_sha256(&fastq).expect("failed to hash fastq"),
+            bytes: file_size(&fastq).expect("failed to stat fastq"),
+            created_at: now_rfc3339(),
+        })
+        .expect("failed to record artifact");
+
+        reconcile_verified_download_state(&db).expect("failed to reconcile download state");
+
+        let run = db
+            .list_runs()
+            .expect("failed to list runs")
+            .into_iter()
+            .find(|item| item.run_accession == "RUN1")
+            .expect("missing run");
+        assert_eq!(run.state, RunState::Verified);
     }
 }

@@ -17,6 +17,7 @@ pub struct ProjectPaths {
     pub manifests_dir: PathBuf,
     pub metadata_dir: PathBuf,
     pub overrides_dir: PathBuf,
+    pub support_dir: PathBuf,
     pub trash_dir: PathBuf,
     pub exports_dir: PathBuf,
 }
@@ -36,6 +37,7 @@ impl ProjectPaths {
             manifests_dir: root.join("manifests"),
             metadata_dir: root.join("metadata"),
             overrides_dir: root.join("metadata").join("overrides"),
+            support_dir: root.join(".rnaa_support"),
             trash_dir: root.join("trash"),
             exports_dir: root.join("exports"),
             root,
@@ -61,6 +63,8 @@ impl ProjectPaths {
             &self.manifests_dir.join("cleanup"),
             &self.metadata_dir,
             &self.overrides_dir,
+            &self.support_dir,
+            &self.support_dir.join("r"),
             &self.trash_dir,
             &self.exports_dir,
         ] {
@@ -104,6 +108,10 @@ impl ProjectPaths {
 
     pub fn manifest_path(&self, stage: &str, id: &str) -> PathBuf {
         self.manifests_dir.join(stage).join(format!("{id}.json"))
+    }
+
+    pub fn support_r_script_path(&self, script_name: &str) -> PathBuf {
+        self.support_dir.join("r").join(script_name)
     }
 
     pub fn trash_run_dir(&self, run_accession: &str) -> PathBuf {

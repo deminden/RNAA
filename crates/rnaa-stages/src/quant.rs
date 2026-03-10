@@ -12,6 +12,8 @@ use rnaa_core::traits::Quantifier;
 use rnaa_core::util::{command_version, file_size, now_rfc3339, write_json_pretty};
 use serde_json::json;
 
+use crate::r_scripts::resolve_r_script;
+
 #[derive(Debug, Clone, Default)]
 pub struct RKallistoQuantifier;
 
@@ -243,25 +245,8 @@ fn _exists_nonempty(path: &Path) -> bool {
 }
 
 fn find_quant_script(paths: &ProjectPaths) -> Result<std::path::PathBuf> {
-    let mut candidates = Vec::new();
-    candidates.push(paths.root.join("r").join("quant_kallisto.R"));
-    if let Ok(dir) = std::env::var("RNAA_R_SCRIPTS_DIR") {
-        candidates.push(std::path::PathBuf::from(dir).join("quant_kallisto.R"));
-    }
-    candidates.push(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("r")
-            .join("quant_kallisto.R"),
-    );
-    for candidate in candidates {
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    bail!(
-        "quant script not found; checked project r/quant_kallisto.R, RNAA_R_SCRIPTS_DIR, and bundled source path"
+    resolve_r_script(paths, "quant_kallisto.R").context(
+        "quant script could not be resolved from RNAA_R_SCRIPTS_DIR or the embedded payload",
     )
 }
 
@@ -327,5 +312,18 @@ mod tests {
 
         let artifacts = reconcile_quant_artifacts(&run, &reference, &paths, &config).unwrap();
         assert!(artifacts.is_some());
+    }
+
+    #[test]
+    fn quant_script_resolution_finds_a_usable_script() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ProjectPaths::new(temp.path());
+        paths.ensure_layout().unwrap();
+        let script = find_quant_script(&paths).unwrap();
+        assert!(script.exists());
+        assert_eq!(
+            script.file_name().and_then(|v| v.to_str()),
+            Some("quant_kallisto.R")
+        );
     }
 }
