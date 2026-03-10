@@ -76,6 +76,14 @@ sanitize_name <- function(value) {
   gsub("[^A-Za-z0-9_.-]", "_", value)
 }
 
+safe_session_info <- function() {
+  tryCatch(
+    utils::capture.output(sessionInfo()),
+    error = function(e) c(paste("sessionInfo unavailable:", conditionMessage(e))),
+    warning = function(w) c(paste("sessionInfo warning:", conditionMessage(w)))
+  )
+}
+
 normalize_stable_id <- function(value) {
   sub("\\.[0-9]+$", "", value)
 }
@@ -325,9 +333,8 @@ main <- function() {
       de_tables = de_outputs
     ),
     captured_stdout = tximport_stdout,
-    session_info = utils::capture.output(sessionInfo())
+    session_info = safe_session_info()
   )
-  dir.create(dirname(manifest_out), recursive = TRUE, showWarnings = FALSE)
   jsonlite::write_json(manifest, path = manifest_out, pretty = TRUE, auto_unbox = TRUE)
 }
 

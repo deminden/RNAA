@@ -44,7 +44,32 @@ run_cmd_capture <- function(cmd, args) {
   paste(out, collapse = "\n")
 }
 
+safe_session_info <- function() {
+  tryCatch(
+    utils::capture.output(sessionInfo()),
+    error = function(e) c(paste("sessionInfo unavailable:", conditionMessage(e))),
+    warning = function(w) c(paste("sessionInfo warning:", conditionMessage(w)))
+  )
+}
+
+log_step <- function(step, detail = NULL) {
+  if (!tolower(Sys.getenv("RNAA_R_SCRIPT_DEBUG", unset = "")) %in% c("1", "true", "yes")) {
+    return(invisible(NULL))
+  }
+  message_text <- paste0("[RNAA quant] ", step)
+  if (!is.null(detail) && !identical(detail, "")) {
+    message_text <- paste0(message_text, ": ", detail)
+  }
+  cat(message_text, "\n", file = stderr())
+  flush.console()
+}
+
+safe_timestamp <- function() {
+  sprintf("%.3f", as.numeric(Sys.time()))
+}
+
 main <- function() {
+  log_step("startup", "parsing arguments")
   args <- parse_args(commandArgs(trailingOnly = TRUE))
   run_id <- required_arg(args, "run")
   fastq1 <- required_arg(args, "fastq1")
@@ -60,6 +85,7 @@ main <- function() {
     stop("--threads must be a positive integer", call. = FALSE)
   }
 
+  log_step("validate_inputs", run_id)
   if (!file.exists(fastq1)) {
     stop(paste("fastq1 does not exist:", fastq1), call. = FALSE)
   }
@@ -70,10 +96,11 @@ main <- function() {
     stop(paste("kallisto index does not exist:", index), call. = FALSE)
   }
   if (!dir.exists(outdir)) {
+    log_step("create_outdir", outdir)
     dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   }
 
-  started_at <- format(Sys.time(), tz = "UTC", usetz = TRUE)
+  started_at <- safe_timestamp()
   paired <- !is.null(fastq2) && !identical(fastq2, "")
 
   kallisto_args <- c(
@@ -91,6 +118,7 @@ main <- function() {
     assumptions <- c(assumptions, "single_end_defaults_l200_s20")
   }
 
+  log_step("launch_kallisto", paste(kallisto_args, collapse = " "))
   status <- system2("kallisto", args = kallisto_args, stdout = TRUE, stderr = TRUE)
   exit_status <- attr(status, "status")
   if (is.null(exit_status)) {
@@ -104,6 +132,7 @@ main <- function() {
     stop(msg, call. = FALSE)
   }
 
+  log_step("verify_outputs", outdir)
   abundance_h5 <- file.path(outdir, "abundance.h5")
   run_info_json <- file.path(outdir, "run_info.json")
   if (!file.exists(abundance_h5) || file.info(abundance_h5)$size <= 0) {
@@ -113,13 +142,13 @@ main <- function() {
     stop("kallisto output missing run_info.json", call. = FALSE)
   }
 
-  dir.create(dirname(manifest_out), recursive = TRUE, showWarnings = FALSE)
+  log_step("build_manifest", manifest_out)
   manifest <- list(
     schema_version = 1L,
     stage = "quant",
     id = run_id,
     started_at = started_at,
-    finished_at = format(Sys.time(), tz = "UTC", usetz = TRUE),
+    finished_at = safe_timestamp(),
     parameters = list(
       paired = paired,
       threads = threads,
@@ -131,9 +160,11 @@ main <- function() {
       kallisto = run_cmd_capture("kallisto", c("version"))
     ),
     assumptions = assumptions,
-    session_info = utils::capture.output(sessionInfo())
+    session_info = safe_session_info()
   )
+  log_step("write_manifest", manifest_out)
   jsonlite::write_json(manifest, path = manifest_out, pretty = TRUE, auto_unbox = TRUE)
+  log_step("complete", run_id)
 }
 
 main()

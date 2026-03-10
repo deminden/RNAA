@@ -850,18 +850,19 @@ fn cmd_quant(
     let reference = EnsemblReferenceManager::new()?.ensure_reference(paths, &config)?;
     reconcile_quant_state(db, paths, &config, &reference)?;
     let scheduler = resolve_scheduler_budget(&config);
-    let mut state = QuantSchedulerState::default();
-    let did_work = run_quant_scheduler_until_idle(
-        paths, db, &config, &reference, &scheduler, &mut state, false,
-    )?;
-    if !did_work {
+    let summary = drive_quant_phase(paths, db, &config, &reference, &scheduler, || {
+        Ok((false, false))
+    })?;
+
+    if !summary.did_work {
         println!("quant\tno_ready_runs");
         return Ok(());
     }
 
-    let tracked = state
+    let tracked = summary
+        .scheduler_state
         .attempted_preprocess
-        .union(&state.attempted_quant)
+        .union(&summary.scheduler_state.attempted_quant)
         .cloned()
         .collect::<HashSet<_>>();
     let runs = db.list_runs()?;
@@ -2337,42 +2338,8 @@ fn cmd_run(
             )
         }))
     };
-
-    let mut scheduler_state = QuantSchedulerState::default();
-    let started_at = std::time::Instant::now();
-    let mut last_progress = started_at;
-    let mut last_progress_snapshot = None;
-    print_run_progress(
-        paths,
-        db,
-        &config,
-        &scheduler,
-        started_at.elapsed(),
-        &mut last_progress_snapshot,
-    )?;
-
-    loop {
-        if last_progress.elapsed() >= Duration::from_secs(10) {
-            print_run_progress(
-                paths,
-                db,
-                &config,
-                &scheduler,
-                started_at.elapsed(),
-                &mut last_progress_snapshot,
-            )?;
-            last_progress = std::time::Instant::now();
-        }
-        let mut did_work = run_quant_scheduler_until_idle(
-            paths,
-            db,
-            &config,
-            &reference,
-            &scheduler,
-            &mut scheduler_state,
-            true,
-        )?;
-
+    drive_quant_phase(paths, db, &config, &reference, &scheduler, || {
+        let mut did_work = false;
         if let Some(handle) = &download_handle
             && handle.is_finished()
         {
@@ -2382,33 +2349,15 @@ fn cmd_run(
                 .map_err(|_| anyhow::anyhow!("download worker thread panicked"))?;
             worker_result?;
             refresh_samplesheet(paths, db)?;
-            last_progress = std::time::Instant::now();
-            print_run_progress(
-                paths,
-                db,
-                &config,
-                &scheduler,
-                started_at.elapsed(),
-                &mut last_progress_snapshot,
-            )?;
             did_work = true;
         }
-
         let pending_download = if args.no_download {
             false
         } else {
             has_pending_download_runs(db)?
         };
-        if download_handle.is_none()
-            && quant_scheduler_is_idle(db, &config, &scheduler_state)?
-            && !pending_download
-        {
-            break;
-        }
-        if !did_work {
-            thread::sleep(Duration::from_secs(2));
-        }
-    }
+        Ok((did_work, pending_download))
+    })?;
 
     cmd_deseq2(
         paths,
@@ -2439,14 +2388,6 @@ fn cmd_run(
             },
         )?;
     }
-    print_run_progress(
-        paths,
-        db,
-        &config,
-        &scheduler,
-        started_at.elapsed(),
-        &mut last_progress_snapshot,
-    )?;
     println!("run\tcompleted");
     Ok(())
 }
@@ -2459,30 +2400,91 @@ struct QuantSchedulerState {
     attempted_quant: HashSet<String>,
 }
 
-fn run_quant_scheduler_until_idle(
+struct QuantPhaseSummary {
+    did_work: bool,
+    scheduler_state: QuantSchedulerState,
+}
+
+fn drive_quant_phase<F>(
     paths: &ProjectPaths,
     db: &Database,
     config: &ProjectConfig,
     reference: &rnaa_core::ReferenceBundle,
     scheduler: &SchedulerBudget,
-    state: &mut QuantSchedulerState,
-    stop_on_idle: bool,
-) -> Result<bool> {
-    let mut did_any_work = false;
+    mut external_step: F,
+) -> Result<QuantPhaseSummary>
+where
+    F: FnMut() -> Result<(bool, bool)>,
+{
+    let mut scheduler_state = QuantSchedulerState::default();
+    let started_at = std::time::Instant::now();
+    let mut last_progress = started_at;
+    let mut last_progress_snapshot = None;
+    print_run_progress(
+        paths,
+        db,
+        config,
+        scheduler,
+        started_at.elapsed(),
+        &mut last_progress_snapshot,
+    )?;
+
+    let mut did_work = false;
     loop {
-        let did_work = schedule_quant_iteration(paths, db, config, reference, scheduler, state)?;
-        did_any_work |= did_work;
-        if stop_on_idle {
+        if last_progress.elapsed() >= Duration::from_secs(10) {
+            print_run_progress(
+                paths,
+                db,
+                config,
+                scheduler,
+                started_at.elapsed(),
+                &mut last_progress_snapshot,
+            )?;
+            last_progress = std::time::Instant::now();
+        }
+        let scheduled = schedule_quant_iteration(
+            paths,
+            db,
+            config,
+            reference,
+            scheduler,
+            &mut scheduler_state,
+        )?;
+        did_work |= scheduled;
+        let (external_did_work, pending_external_work) = external_step()?;
+        did_work |= external_did_work;
+        if external_did_work {
+            last_progress = std::time::Instant::now();
+            print_run_progress(
+                paths,
+                db,
+                config,
+                scheduler,
+                started_at.elapsed(),
+                &mut last_progress_snapshot,
+            )?;
+        }
+        if quant_scheduler_is_idle(db, config, &scheduler_state)? && !pending_external_work {
             break;
         }
-        if quant_scheduler_is_idle(db, config, state)? {
-            break;
-        }
-        if !did_work {
-            thread::sleep(Duration::from_millis(200));
+        if !scheduled && !external_did_work {
+            thread::sleep(Duration::from_secs(2));
         }
     }
-    Ok(did_any_work)
+
+    print_run_progress(
+        paths,
+        db,
+        config,
+        scheduler,
+        started_at.elapsed(),
+        &mut last_progress_snapshot,
+    )?;
+
+    Ok(QuantPhaseSummary {
+        did_work,
+        scheduler_state,
+    })
 }
 
 fn schedule_quant_iteration(
