@@ -2806,7 +2806,7 @@ fn compute_progress_snapshot(
         || runs.iter().all(|run| is_de_done_state(run.state));
     let corr_stage_done = is_project_stage_done(project_stages, &["corr"])
         || runs.iter().all(|run| is_corr_done_state(run.state));
-    let download_done = artifacts
+    let raw_downloaded_runs = artifacts
         .iter()
         .filter(|artifact| {
             matches!(
@@ -2818,8 +2818,13 @@ fn compute_progress_snapshot(
             )
         })
         .filter_map(|artifact| artifact.run_accession.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .len() as u64;
+        .collect::<std::collections::BTreeSet<_>>();
+    let state_downloaded_runs = runs
+        .iter()
+        .filter(|run| is_download_complete_state(run.state))
+        .map(|run| run.run_accession.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let download_done = raw_downloaded_runs.union(&state_downloaded_runs).count() as u64;
     let downloaded_bytes = artifacts
         .iter()
         .filter(|artifact| {
@@ -3553,6 +3558,27 @@ fn is_preprocess_done_state(state: RunState) -> bool {
         RunState::PreprocessDone
             | RunState::QuantRunning
             | RunState::QuantDone
+            | RunState::DeRunning
+            | RunState::DeDone
+            | RunState::DeFailed
+            | RunState::CorrRunning
+            | RunState::CorrDone
+            | RunState::CorrFailed
+            | RunState::Cleaned
+    )
+}
+
+fn is_download_complete_state(state: RunState) -> bool {
+    matches!(
+        state,
+        RunState::Downloaded
+            | RunState::Verified
+            | RunState::PreprocessRunning
+            | RunState::PreprocessDone
+            | RunState::PreprocessFailed
+            | RunState::QuantRunning
+            | RunState::QuantDone
+            | RunState::QuantFailed
             | RunState::DeRunning
             | RunState::DeDone
             | RunState::DeFailed
