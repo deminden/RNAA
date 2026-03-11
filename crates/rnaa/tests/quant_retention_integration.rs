@@ -183,7 +183,7 @@ fn seed_trimmed_fastq(paths: &ProjectPaths, db: &Database, project_id: &str) {
 }
 
 #[test]
-fn quant_retention_trimmed_moves_original_fastq_to_trash() {
+fn quant_retention_trimmed_deletes_original_fastq() {
     let temp = TempDir::new().expect("failed to create tempdir");
     let root = temp.path();
     let bin_dir = root.join("mock_bin");
@@ -214,11 +214,6 @@ fn quant_retention_trimmed_moves_original_fastq_to_trash() {
         .quant_run_dir("RUN1", "r-kallisto")
         .join("fasterp")
         .join("trimmed.fastq");
-    let trashed_raw = paths
-        .trash_run_dir("RUN1")
-        .join("fastq_retention")
-        .join("FASTQ_SINGLE_RUN1.fastq");
-
     let artifacts = db
         .list_artifacts_for_run(Some("RUN1"))
         .expect("failed to list artifacts");
@@ -226,8 +221,11 @@ fn quant_retention_trimmed_moves_original_fastq_to_trash() {
         !raw_fastq.exists(),
         "raw FASTQ should be removed from raw dir"
     );
+    assert!(
+        !paths.raw_run_dir("RUN1").exists(),
+        "empty raw run dir should be pruned"
+    );
     assert!(trimmed_fastq.exists(), "trimmed FASTQ should remain");
-    assert!(trashed_raw.exists(), "raw FASTQ should be moved to trash");
     assert!(
         artifacts
             .iter()
@@ -237,6 +235,12 @@ fn quant_retention_trimmed_moves_original_fastq_to_trash() {
         !artifacts
             .iter()
             .any(|item| item.kind == ArtifactKind::FastqSingle)
+    );
+    assert!(
+        !artifacts
+            .iter()
+            .any(|item| item.kind == ArtifactKind::Trash),
+        "retention should not record trash artifacts"
     );
 }
 
@@ -278,6 +282,17 @@ fn quant_retention_none_removes_both_original_and_trimmed_fastq() {
         .expect("failed to list artifacts");
     assert!(!raw_fastq.exists(), "raw FASTQ should be removed");
     assert!(!trimmed_fastq.exists(), "trimmed FASTQ should be removed");
+    assert!(
+        !paths.raw_run_dir("RUN1").exists(),
+        "empty raw run dir should be pruned"
+    );
+    assert!(
+        !paths
+            .quant_run_dir("RUN1", "r-kallisto")
+            .join("fasterp")
+            .exists(),
+        "empty trimmed FASTQ dir should be pruned"
+    );
     assert!(!artifacts.iter().any(|item| {
         matches!(
             item.kind,
@@ -285,9 +300,9 @@ fn quant_retention_none_removes_both_original_and_trimmed_fastq() {
         )
     }));
     assert!(
-        artifacts
+        !artifacts
             .iter()
             .any(|item| item.kind == ArtifactKind::Trash),
-        "trash artifacts should be recorded"
+        "retention should not record trash artifacts"
     );
 }

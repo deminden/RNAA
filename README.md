@@ -105,7 +105,7 @@ When preprocessing is enabled, RNAA can prune FASTQ inputs after a successful qu
 - `--fastq-retention none` removes both original and trimmed FASTQ files and keeps only downstream quant outputs
 - `--preprocess-threads N` sets per-run `fasterp` threads when preprocessing is enabled
 
-Removed FASTQ files are moved into the project `trash/` area and removed from the active artifact set.
+Removed FASTQ files are permanently deleted after successful quantification and removed from the active artifact set.
 
 Preprocess QC is parsed into a normalized SQLite table and gated by default before quant/downstream analysis. The built-in defaults are conservative fail-fast thresholds intended to reject catastrophically bad files:
 

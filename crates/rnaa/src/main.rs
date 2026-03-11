@@ -3238,57 +3238,18 @@ fn apply_fastq_retention(
         return Ok(());
     }
 
-    let trash_dir = paths.trash_run_dir(run_accession).join("fastq_retention");
-    fs::create_dir_all(&trash_dir)
-        .with_context(|| format!("failed to create {}", trash_dir.display()))?;
-    let mut moved = Vec::new();
+    let mut deleted = Vec::new();
     for artifact in selected {
         let source = PathBuf::from(&artifact.path);
         if !source.exists() {
             db.delete_artifact(&artifact.path)?;
             continue;
         }
-        let file_name = source.file_name().ok_or_else(|| {
-            anyhow::anyhow!("artifact path missing basename: {}", source.display())
-        })?;
-        let destination = trash_dir.join(format!(
-            "{}_{}",
-            artifact.kind.as_str(),
-            file_name.to_string_lossy()
-        ));
-        if destination.exists() {
-            fs::remove_file(&destination)
-                .with_context(|| format!("failed to replace {}", destination.display()))?;
-        }
-        fs::rename(&source, &destination).or_else(|_| {
-            fs::copy(&source, &destination)
-                .with_context(|| {
-                    format!(
-                        "failed to copy {} to {} during retention cleanup",
-                        source.display(),
-                        destination.display()
-                    )
-                })
-                .and_then(|_| {
-                    fs::remove_file(&source).with_context(|| {
-                        format!("failed to remove {} after copy", source.display())
-                    })
-                })
-        })?;
-        db.record_artifact(&ArtifactRecord {
-            project_id: db.project_id().to_string(),
-            run_accession: Some(run_accession.to_string()),
-            kind: ArtifactKind::Trash,
-            path: destination.display().to_string(),
-            blob_id: None,
-            shared_path: None,
-            checksum_type: artifact.checksum_type.clone(),
-            checksum: artifact.checksum.clone(),
-            bytes: artifact.bytes,
-            created_at: now_rfc3339(),
-        })?;
+        fs::remove_file(&source)
+            .with_context(|| format!("failed to permanently delete {}", source.display()))?;
         db.delete_artifact(&artifact.path)?;
-        moved.push(destination.display().to_string());
+        prune_empty_parent_dirs(&source, &paths.root)?;
+        deleted.push(source.display().to_string());
     }
     db.append_event(
         "retention",
@@ -3296,9 +3257,32 @@ fn apply_fastq_retention(
         "FASTQ retention policy applied",
         json!({
             "policy": fastq_retention_label(config.quant.fastq_retention),
-            "moved_to_trash": moved,
+            "deleted": deleted,
         }),
     )?;
+    Ok(())
+}
+
+fn prune_empty_parent_dirs(path: &Path, stop_at: &Path) -> Result<()> {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir == stop_at || !dir.starts_with(stop_at) {
+            break;
+        }
+        match fs::remove_dir(dir) {
+            Ok(()) => {
+                current = dir.parent();
+            }
+            Err(err) if err.kind() == ErrorKind::DirectoryNotEmpty => break,
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                current = dir.parent();
+            }
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("failed to prune empty dir {}", dir.display()));
+            }
+        }
+    }
     Ok(())
 }
 
