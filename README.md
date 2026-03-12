@@ -66,7 +66,7 @@ cargo build --release
 ./target/release/rnaa resolve --root /data/my-rnaa-project
 ./target/release/rnaa refs prepare --root /data/my-rnaa-project --organism human --ensembl latest
 ./target/release/rnaa download --root /data/my-rnaa-project --forever
-./target/release/rnaa quant --root /data/my-rnaa-project --preprocess --preprocess-threads 16 --fastq-retention both
+./target/release/rnaa quant --root /data/my-rnaa-project --worker-budget 100 --preprocess --preprocess-threads 16 --fastq-retention both
 ./target/release/rnaa qc reevaluate --root /data/my-rnaa-project
 ./target/release/rnaa normalize --root /data/my-rnaa-project --design "~ batch + condition"
 ./target/release/rnaa deseq2 --root /data/my-rnaa-project --design "~ batch + condition" --contrast condition A B
@@ -77,7 +77,7 @@ cargo build --release
 Single-command orchestration:
 
 ```bash
-./target/release/rnaa run --root /data/my-rnaa-project --preprocess-threads 16 --fastq-retention trimmed --log-file /data/my-rnaa-project/logs/run-live.log
+./target/release/rnaa run --root /data/my-rnaa-project --worker-budget 100 --preprocess-threads 16 --fastq-retention trimmed --log-file /data/my-rnaa-project/logs/run-live.log
 ```
 
 ## Runtime Behavior
@@ -104,6 +104,20 @@ When preprocessing is enabled, RNAA can prune FASTQ inputs after a successful qu
 - `--fastq-retention trimmed` keeps only trimmed FASTQ files
 - `--fastq-retention none` removes both original and trimmed FASTQ files and keeps only downstream quant outputs
 - `--preprocess-threads N` sets per-run `fasterp` threads when preprocessing is enabled
+
+Scheduling is budget-first:
+
+- `--worker-budget N` sets the total CPU budget RNAA may spend on preprocessing and quantification
+- `fasterp` is capped at 16 threads per run
+- `kallisto` uses the remaining budget, deriving parallel run count automatically from the budget and per-run thread cap
+- DESeq2/normalization is forced to a single thread
+- correlation uses the full configured budget by default
+
+Storage pressure can also gate downloads:
+
+- set `storage.max_active_size = "100GB"` in `rnaa.toml`
+- or pass `--storage-limit 100GB` to `rnaa download` or `rnaa run`
+- when active project storage reaches the limit, RNAA pauses new downloads until quant cleanup frees space
 
 Removed FASTQ files are permanently deleted after successful quantification and removed from the active artifact set.
 

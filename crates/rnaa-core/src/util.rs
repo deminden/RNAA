@@ -70,6 +70,43 @@ pub fn dir_size(path: &Path) -> u64 {
         .sum()
 }
 
+pub fn parse_size_bytes(raw: &str) -> Result<u64> {
+    let value = raw.trim();
+    if value.is_empty() {
+        anyhow::bail!("size string is empty");
+    }
+
+    let split_idx = value
+        .find(|ch: char| !ch.is_ascii_digit() && ch != '.')
+        .unwrap_or(value.len());
+    let number = value[..split_idx].trim();
+    let suffix = value[split_idx..].trim().to_ascii_lowercase();
+    let scalar = number
+        .parse::<f64>()
+        .with_context(|| format!("invalid size value '{}'", value))?;
+    if !scalar.is_finite() || scalar < 0.0 {
+        anyhow::bail!("invalid size value '{}'", value);
+    }
+
+    let multiplier = match suffix.as_str() {
+        "" | "b" => 1_f64,
+        "k" | "kb" => 1_000_f64,
+        "m" | "mb" => 1_000_000_f64,
+        "g" | "gb" => 1_000_000_000_f64,
+        "t" | "tb" => 1_000_000_000_000_f64,
+        "kib" => 1024_f64,
+        "mib" => 1024_f64 * 1024_f64,
+        "gib" => 1024_f64 * 1024_f64 * 1024_f64,
+        "tib" => 1024_f64 * 1024_f64 * 1024_f64 * 1024_f64,
+        _ => anyhow::bail!("unsupported size suffix '{}'", suffix),
+    };
+    let bytes = scalar * multiplier;
+    if bytes > u64::MAX as f64 {
+        anyhow::bail!("size '{}' exceeds supported range", value);
+    }
+    Ok(bytes.round() as u64)
+}
+
 pub fn sanitize_basename(raw: &str) -> String {
     raw.chars()
         .map(|ch| match ch {

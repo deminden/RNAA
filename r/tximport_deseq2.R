@@ -154,7 +154,9 @@ main <- function() {
   for (i in seq_len(nrow(samplesheet))) {
     run_id <- samplesheet$run_accession[[i]]
     abundance <- file.path(quant_root, run_id, engine, "abundance.h5")
-    if (file.exists(abundance) && file.info(abundance)$size > 0) {
+    if (file.exists(abundance) &&
+        file.info(abundance)$size > 0 &&
+        isTRUE(rhdf5::H5Fis_hdf5(abundance))) {
       keep_idx <- c(keep_idx, i)
       files <- c(files, abundance)
     }

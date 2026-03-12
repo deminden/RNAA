@@ -54,9 +54,11 @@ pub trait Quantifier: Send + Sync {
 }
 
 pub trait DifferentialExpression: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
     fn deseq2(
         &self,
         project_id: &str,
+        samplesheet_path: &std::path::Path,
         reference: &ReferenceBundle,
         design: &str,
         contrasts: &[ContrastSpec],
@@ -81,6 +83,7 @@ pub trait Correlator: Send + Sync {
         matrix: &AdjustedMatrix,
         method: CorrelationMethod,
         output_mode: &OutputMode,
+        threads: usize,
         paths: &ProjectPaths,
         project_id: &str,
     ) -> Result<Vec<std::path::PathBuf>>;

@@ -4,10 +4,10 @@ use std::process::{Command, Output};
 
 use rnaa_core::Database;
 use rnaa_core::config::ProjectConfig;
-use rnaa_core::model::{LibraryLayout, RunRecord};
+use rnaa_core::model::{ArtifactKind, ArtifactRecord, LibraryLayout, RunRecord};
 use rnaa_core::paths::ProjectPaths;
 use rnaa_core::state::RunState;
-use rnaa_core::util::{compute_sha256, now_rfc3339};
+use rnaa_core::util::{compute_sha256, file_size, now_rfc3339};
 use tempfile::TempDir;
 
 fn rnaa_bin() -> &'static str {
@@ -169,6 +169,41 @@ fn setup_project(root: &Path, include_batch: bool) -> (ProjectPaths, String) {
         .collect::<Vec<_>>();
     db.upsert_runs(&runs).expect("failed to upsert runs");
 
+    for run in ["RUN1", "RUN2"] {
+        let quant_dir = paths.quant_run_dir(run, "r-kallisto");
+        fs::create_dir_all(&quant_dir).expect("failed to create quant dir");
+        let abundance_h5 = quant_dir.join("abundance.h5");
+        let run_info_json = quant_dir.join("run_info.json");
+        fs::write(&abundance_h5, b"h5").expect("failed to write abundance.h5");
+        fs::write(&run_info_json, b"{\"run\":\"ok\"}").expect("failed to write run_info.json");
+        db.record_artifact(&ArtifactRecord {
+            project_id: project.project_id.clone(),
+            run_accession: Some(run.to_string()),
+            kind: ArtifactKind::QuantAbundanceH5,
+            path: abundance_h5.display().to_string(),
+            blob_id: None,
+            shared_path: None,
+            checksum_type: "sha256".to_string(),
+            checksum: compute_sha256(&abundance_h5).expect("failed to hash abundance.h5"),
+            bytes: file_size(&abundance_h5).expect("failed to stat abundance.h5"),
+            created_at: now_rfc3339(),
+        })
+        .expect("failed to record abundance artifact");
+        db.record_artifact(&ArtifactRecord {
+            project_id: project.project_id.clone(),
+            run_accession: Some(run.to_string()),
+            kind: ArtifactKind::QuantRunInfo,
+            path: run_info_json.display().to_string(),
+            blob_id: None,
+            shared_path: None,
+            checksum_type: "sha256".to_string(),
+            checksum: compute_sha256(&run_info_json).expect("failed to hash run_info.json"),
+            bytes: file_size(&run_info_json).expect("failed to stat run_info.json"),
+            created_at: now_rfc3339(),
+        })
+        .expect("failed to record run info artifact");
+    }
+
     let samplesheet = if include_batch {
         "project_id\tstudy_accession\trun_accession\tcondition\tbatch\n\
          test\tSRPTEST\tRUN1\tA\tB1\n\
@@ -181,6 +216,56 @@ fn setup_project(root: &Path, include_batch: bool) -> (ProjectPaths, String) {
     fs::write(paths.samplesheet_path(), samplesheet).expect("failed to write samplesheet");
 
     (paths, project.project_id)
+}
+
+#[test]
+fn normalize_excludes_and_demotes_runs_with_invalid_quant_outputs() {
+    let temp = TempDir::new().expect("failed to create tempdir");
+    let root = temp.path();
+    let bin_dir = root.join("mock_bin");
+    fs::create_dir_all(&bin_dir).expect("failed to create mock bin dir");
+    make_mock_rscript(&bin_dir);
+
+    run_ok(
+        &["init", "--root", root.to_str().expect("invalid root path")],
+        Some(&bin_dir),
+    );
+    let (paths, _project_id) = setup_project(root, true);
+
+    fs::remove_file(
+        paths
+            .quant_run_dir("RUN2", "r-kallisto")
+            .join("abundance.h5"),
+    )
+    .expect("failed to remove broken abundance");
+
+    let output = run_cmd(
+        &[
+            "normalize",
+            "--root",
+            root.to_str().expect("invalid root path"),
+            "--design",
+            "~ batch + condition",
+        ],
+        Some(&bin_dir),
+    );
+    assert!(!output.status.success(), "normalize unexpectedly succeeded");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("need at least 2 valid quantified runs"));
+
+    let db = Database::open(root).expect("failed to reopen db");
+    let runs = db.list_runs().expect("failed to list runs");
+    let run2 = runs
+        .iter()
+        .find(|run| run.run_accession == "RUN2")
+        .expect("missing RUN2");
+    assert_eq!(run2.state, RunState::QuantFailed);
+    assert!(
+        run2.last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("abundance.h5 missing or empty")
+    );
 }
 
 #[test]

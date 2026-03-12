@@ -20,13 +20,14 @@ use rnaa_core::model::{
     SharedBlobRecord, VerifiedFile,
 };
 use rnaa_core::paths::ProjectPaths;
-use rnaa_core::samplesheet::{load_or_init_column_map, write_samplesheet};
+use rnaa_core::samplesheet::{build_samplesheet_rows, load_or_init_column_map, write_samplesheet};
 use rnaa_core::state::{ProjectStageState, RunState};
 use rnaa_core::traits::{
     Correlator, DifferentialExpression, MatrixAdjuster, Preprocessor, Quantifier, ReferenceManager,
 };
 use rnaa_core::util::{
-    compute_sha256, dir_size, file_size, now_rfc3339, sanitize_basename, write_json_pretty,
+    compute_sha256, dir_size, file_size, now_rfc3339, parse_size_bytes, sanitize_basename,
+    write_json_pretty,
 };
 use rnaa_core::{Database, ProjectRecord};
 use rnaa_formats::matrix::{MatrixData, read_matrix_tsv, write_matrix_tsv};
@@ -230,6 +231,8 @@ struct RefsPrepareArgs {
 struct DownloadArgs {
     #[arg(long)]
     concurrency: Option<usize>,
+    #[arg(long = "storage-limit")]
+    storage_limit: Option<String>,
 
     #[arg(long)]
     forever: bool,
@@ -242,6 +245,8 @@ struct DownloadArgs {
 struct QuantArgs {
     #[arg(long)]
     engine: Option<String>,
+    #[arg(long = "worker-budget")]
+    worker_budget: Option<usize>,
     #[arg(long)]
     threads: Option<usize>,
     #[arg(long)]
@@ -326,6 +331,10 @@ struct RunArgs {
     no_download: bool,
     #[arg(long, default_value_t = false)]
     no_corr: bool,
+    #[arg(long = "worker-budget")]
+    worker_budget: Option<usize>,
+    #[arg(long = "storage-limit")]
+    storage_limit: Option<String>,
     #[arg(long = "fastq-retention")]
     fastq_retention: Option<String>,
     #[arg(long = "preprocess-threads")]
@@ -477,6 +486,8 @@ fn cmd_status(paths: &ProjectPaths, db: &Database, config: &ProjectConfig) -> Re
     let inputs = db.list_inputs()?;
     let overrides = db.list_metadata_overrides()?;
     let disk_usage = db.disk_usage_bytes()?;
+    let active_storage_bytes = project_active_storage_bytes(paths);
+    let storage_limit_bytes = configured_storage_limit_bytes(config)?;
     let runs = db.list_runs()?;
     let artifacts = db.list_artifacts()?;
     let events = db.list_events(10_000)?;
@@ -499,6 +510,20 @@ fn cmd_status(paths: &ProjectPaths, db: &Database, config: &ProjectConfig) -> Re
         "disk_usage_bytes\t{}",
         disk_usage.max(dir_size(&paths.raw_dir))
     );
+    println!("active_storage_bytes\t{}", active_storage_bytes);
+    if let Some(limit) = storage_limit_bytes {
+        println!("storage_limit_bytes\t{}", limit);
+        println!(
+            "storage_limit_utilization_pct\t{:.1}",
+            if limit == 0 {
+                0.0
+            } else {
+                (active_storage_bytes as f64 / limit as f64) * 100.0
+            }
+        );
+    } else {
+        println!("storage_limit_bytes\tunlimited");
+    }
     println!(
         "progress_download\t{}/{} ({:.1}%)",
         progress.download_done,
@@ -642,10 +667,16 @@ fn cmd_doctor(paths: &ProjectPaths, project: Option<&ProjectRecord>) -> Result<(
 fn cmd_download(
     paths: &ProjectPaths,
     db: Database,
-    config: ProjectConfig,
+    mut config: ProjectConfig,
     args: DownloadArgs,
 ) -> Result<()> {
     recover_interrupted_work(&db)?;
+    if let Some(storage_limit) = args.storage_limit {
+        parse_size_bytes(&storage_limit)?;
+        config.storage.max_active_size = storage_limit;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
     let downloader = ShellDownloader;
     let prefer = args
         .prefer
@@ -782,6 +813,14 @@ fn cmd_quant(
     reconcile_verified_download_state(db)?;
     if let Some(engine) = args.engine {
         config.quant.engine = engine;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
+    if let Some(worker_budget) = args.worker_budget {
+        if worker_budget == 0 {
+            bail!("--worker-budget must be >= 1");
+        }
+        config.quant.worker_budget = worker_budget;
         config.save(&paths.config_path)?;
         db.set_project_config(&config)?;
     }
@@ -1342,14 +1381,14 @@ fn run_deseq2_stage(
         return Ok((0, 0));
     }
 
-    let samplesheet_path = paths.samplesheet_path();
-    if !samplesheet_path.exists() {
+    let canonical_samplesheet_path = paths.samplesheet_path();
+    if !canonical_samplesheet_path.exists() {
         bail!(
             "samplesheet missing at {}; run `rnaa resolve` first",
-            samplesheet_path.display()
+            canonical_samplesheet_path.display()
         );
     }
-    let header = read_samplesheet_header(&samplesheet_path)?;
+    let header = read_samplesheet_header(&canonical_samplesheet_path)?;
     let design = design_override.unwrap_or_else(|| config.deseq2.design.clone());
     validate_design_formula(&header, &design)?;
     for contrast in &contrasts {
@@ -1369,25 +1408,41 @@ fn run_deseq2_stage(
     }
 
     let reference = EnsemblReferenceManager::new()?.ensure_reference(paths, &config)?;
+    let validated_runs = validate_deseq2_quant_inputs(db, paths, &config, &runs)?;
+    if validated_runs.is_empty() {
+        println!("{stage_name}\tno_valid_quantified_runs");
+        return Ok((0, 0));
+    }
+    if validated_runs.len() < 2 {
+        bail!(
+            "need at least 2 valid quantified runs for {stage_name}; found {}",
+            validated_runs.len()
+        );
+    }
+    let filtered_samplesheet_path = paths
+        .de_project_dir(db.project_id())
+        .join("samplesheet_quantified.tsv");
+    write_filtered_deseq2_samplesheet(db, paths, &validated_runs, &filtered_samplesheet_path)?;
     let de_request_manifest = paths
         .de_project_dir(db.project_id())
         .join("rnaa_deseq2_request.json");
     if let Some((outputs, recorded)) = reconcile_deseq2_stage(
         paths,
         db,
-        &runs,
+        &validated_runs,
         &reference,
         &design,
         &contrasts,
         &config,
         store_contrasts,
+        &filtered_samplesheet_path,
         &de_request_manifest,
     )? {
         return Ok((outputs, recorded));
     }
 
     let runner = Deseq2Runner;
-    let target_runs = runs
+    let target_runs = validated_runs
         .iter()
         .map(|run| run.run_accession.clone())
         .collect::<Vec<_>>();
@@ -1408,6 +1463,7 @@ fn run_deseq2_stage(
 
     let outputs = match runner.deseq2(
         db.project_id(),
+        &filtered_samplesheet_path,
         &reference,
         &design,
         &contrasts,
@@ -1441,6 +1497,8 @@ fn run_deseq2_stage(
             "transform": config.deseq2.transform,
             "counts_from_abundance": config.deseq2.counts_from_abundance,
             "tx2gene": reference.tx2gene_path.display().to_string(),
+            "samplesheet": filtered_samplesheet_path.display().to_string(),
+            "runs": target_runs,
             "gene_annotation": reference
                 .gene_annotation_path
                 .as_ref()
@@ -1464,7 +1522,7 @@ fn run_deseq2_stage(
     })?;
     recorded += 1;
 
-    mark_runs_de_done(db, &runs)?;
+    mark_runs_de_done(db, &validated_runs)?;
     db.set_project_stage_state(stage_name, ProjectStageState::Done, None)?;
     db.append_event(
         stage_name,
@@ -1489,6 +1547,7 @@ fn reconcile_deseq2_stage(
     contrasts: &[ContrastSpec],
     config: &ProjectConfig,
     store_contrasts: bool,
+    samplesheet_path: &Path,
     request_manifest_path: &Path,
 ) -> Result<Option<(u64, u64)>> {
     if !request_manifest_path.exists() || file_size(request_manifest_path).unwrap_or_default() == 0
@@ -1501,6 +1560,11 @@ fn reconcile_deseq2_stage(
         "transform": config.deseq2.transform,
         "counts_from_abundance": config.deseq2.counts_from_abundance,
         "tx2gene": reference.tx2gene_path.display().to_string(),
+        "samplesheet": samplesheet_path.display().to_string(),
+        "runs": runs
+            .iter()
+            .map(|run| run.run_accession.clone())
+            .collect::<Vec<_>>(),
         "gene_annotation": reference
             .gene_annotation_path
             .as_ref()
@@ -1519,6 +1583,8 @@ fn reconcile_deseq2_stage(
         "transform",
         "counts_from_abundance",
         "tx2gene",
+        "samplesheet",
+        "runs",
         "gene_annotation",
         "store_contrasts",
         "contrasts",
@@ -2066,24 +2132,30 @@ fn cmd_corr(
     let method = config.corr.method.parse::<CorrelationMethod>()?;
     let output_mode = parse_output_mode(&config.corr.output)?;
     let correlator = MinCorrCorrelator;
-    let mut outputs =
-        match correlator.correlate(&adjusted, method, &output_mode, paths, db.project_id()) {
-            Ok(outputs) => outputs,
-            Err(err) => {
-                let message = format!("{err:#}");
-                for run in &runs {
-                    db.set_run_state(&run.run_accession, RunState::CorrFailed, Some(&message))?;
-                }
-                db.set_project_stage_state("corr", ProjectStageState::Failed, Some(&message))?;
-                db.append_event(
-                    "corr",
-                    None,
-                    "corr stage failed",
-                    serde_json::json!({ "error": message }),
-                )?;
-                return Err(err);
+    let mut outputs = match correlator.correlate(
+        &adjusted,
+        method,
+        &output_mode,
+        resolve_scheduler_budget(&config).corr_threads,
+        paths,
+        db.project_id(),
+    ) {
+        Ok(outputs) => outputs,
+        Err(err) => {
+            let message = format!("{err:#}");
+            for run in &runs {
+                db.set_run_state(&run.run_accession, RunState::CorrFailed, Some(&message))?;
             }
-        };
+            db.set_project_stage_state("corr", ProjectStageState::Failed, Some(&message))?;
+            db.append_event(
+                "corr",
+                None,
+                "corr stage failed",
+                serde_json::json!({ "error": message }),
+            )?;
+            return Err(err);
+        }
+    };
     if let Some(module_gmt) = args.module_gmt.as_ref() {
         let params = ModuleGseaParams {
             gmt_path: module_gmt.clone(),
@@ -2305,6 +2377,14 @@ fn cmd_run(
         config.save(&paths.config_path)?;
         db.set_project_config(&config)?;
     }
+    if let Some(worker_budget) = args.worker_budget {
+        if worker_budget == 0 {
+            bail!("--worker-budget must be >= 1");
+        }
+        config.quant.worker_budget = worker_budget;
+        config.save(&paths.config_path)?;
+        db.set_project_config(&config)?;
+    }
     if let Some(preprocess_threads) = args.preprocess_threads {
         if preprocess_threads == 0 {
             bail!("--preprocess-threads must be >= 1");
@@ -2392,10 +2472,15 @@ fn cmd_run(
     Ok(())
 }
 
+struct RunningTask {
+    handle: thread::JoinHandle<Result<()>>,
+    threads_used: usize,
+}
+
 #[derive(Default)]
 struct QuantSchedulerState {
-    preprocess_tasks: Vec<thread::JoinHandle<Result<()>>>,
-    quant_tasks: Vec<thread::JoinHandle<Result<()>>>,
+    preprocess_tasks: Vec<RunningTask>,
+    quant_tasks: Vec<RunningTask>,
     attempted_preprocess: HashSet<String>,
     attempted_quant: HashSet<String>,
 }
@@ -2507,9 +2592,19 @@ fn schedule_quant_iteration(
         .iter()
         .filter(|run| matches!(run.state, RunState::QuantRunning))
         .count();
-    let mut available_cpu = scheduler.cpu_budget.saturating_sub(
-        preprocess_running * scheduler.preprocess_threads + quant_running * scheduler.quant_threads,
-    );
+    let preprocess_cpu_in_use = state
+        .preprocess_tasks
+        .iter()
+        .map(|task| task.threads_used)
+        .sum::<usize>();
+    let quant_cpu_in_use = state
+        .quant_tasks
+        .iter()
+        .map(|task| task.threads_used)
+        .sum::<usize>();
+    let mut available_cpu = scheduler
+        .cpu_budget
+        .saturating_sub(preprocess_cpu_in_use + quant_cpu_in_use);
     let mut did_work = false;
 
     if config.quant.preprocess {
@@ -2525,11 +2620,15 @@ fn schedule_quant_iteration(
             let db = db.clone();
             let paths = paths.clone();
             let config = config.clone();
-            state.preprocess_tasks.push(thread::spawn(move || {
-                process_preprocess_run(&db, &paths, &config, run).map(|_| ())
-            }));
+            let threads_used = scheduler.preprocess_threads.max(1);
+            state.preprocess_tasks.push(RunningTask {
+                handle: thread::spawn(move || {
+                    process_preprocess_run(&db, &paths, &config, run).map(|_| ())
+                }),
+                threads_used,
+            });
             preprocess_running += 1;
-            available_cpu = available_cpu.saturating_sub(scheduler.preprocess_threads.max(1));
+            available_cpu = available_cpu.saturating_sub(threads_used);
             did_work = true;
         }
     }
@@ -2541,7 +2640,7 @@ fn schedule_quant_iteration(
     };
     let mut quant_ready = db.list_runs_in_states(&quant_states)?;
     quant_ready.retain(|run| !state.attempted_quant.contains(&run.run_accession));
-    while available_cpu >= scheduler.quant_threads
+    while available_cpu >= scheduler.quant_threads.min(scheduler.quant_thread_cap)
         && quant_running < scheduler.quant_workers
         && !quant_ready.is_empty()
     {
@@ -2549,13 +2648,18 @@ fn schedule_quant_iteration(
         state.attempted_quant.insert(run.run_accession.clone());
         let db = db.clone();
         let paths = paths.clone();
-        let config = config.clone();
+        let mut config = config.clone();
         let reference = reference.clone();
-        state.quant_tasks.push(thread::spawn(move || {
-            process_quant_run(&db, &paths, &config, &reference, run, false).map(|_| ())
-        }));
+        let threads_used = available_cpu.min(scheduler.quant_thread_cap).max(1);
+        config.quant.threads = threads_used;
+        state.quant_tasks.push(RunningTask {
+            handle: thread::spawn(move || {
+                process_quant_run(&db, &paths, &config, &reference, run, false).map(|_| ())
+            }),
+            threads_used,
+        });
         quant_running += 1;
-        available_cpu = available_cpu.saturating_sub(scheduler.quant_threads);
+        available_cpu = available_cpu.saturating_sub(threads_used);
         did_work = true;
     }
 
@@ -2588,10 +2692,14 @@ fn quant_scheduler_is_idle(
 struct SchedulerBudget {
     cpu_budget: usize,
     reserve_workers: usize,
+    requested_worker_budget: usize,
     preprocess_workers: usize,
     preprocess_threads: usize,
     quant_workers: usize,
     quant_threads: usize,
+    quant_thread_cap: usize,
+    deseq2_threads: usize,
+    corr_threads: usize,
     download_workers: usize,
 }
 
@@ -2599,56 +2707,70 @@ fn resolve_scheduler_budget(config: &ProjectConfig) -> SchedulerBudget {
     let total_workers = std::thread::available_parallelism()
         .map(|value| value.get())
         .unwrap_or(1);
-    let reserve_workers = if total_workers > 4 {
+    let requested_worker_budget = config.quant.worker_budget.min(total_workers);
+    let reserve_workers = if requested_worker_budget > 0 {
+        0
+    } else if total_workers > 4 {
         2
     } else {
         total_workers.saturating_sub(1)
     };
-    let cpu_budget = total_workers.saturating_sub(reserve_workers).max(1);
+    let cpu_budget = if requested_worker_budget > 0 {
+        requested_worker_budget.max(1)
+    } else {
+        total_workers.saturating_sub(reserve_workers).max(1)
+    };
     let preprocess_threads = if config.quant.preprocess {
-        config.quant.preprocess_threads.max(1).min(cpu_budget)
+        config.quant.preprocess_threads.clamp(1, 16).min(cpu_budget)
     } else {
         0
     };
-    let quant_threads = config.quant.threads.max(1).min(cpu_budget);
-    let quant_cpu_budget = if preprocess_threads > 0 {
-        cpu_budget
-            .saturating_sub(preprocess_threads)
-            .max(quant_threads)
-    } else {
-        cpu_budget
-    };
+    let quant_thread_cap = config.quant.threads.max(1).min(cpu_budget);
+    let quant_threads = quant_thread_cap;
+    let quant_cpu_budget = cpu_budget;
     let quant_workers = if config.quant.workers == 0 {
-        quant_cpu_budget.saturating_div(quant_threads).max(1)
+        quant_cpu_budget.saturating_div(quant_thread_cap).max(1)
     } else {
-        config.quant.workers.max(1)
+        config
+            .quant
+            .workers
+            .max(1)
+            .min(quant_cpu_budget.saturating_div(quant_thread_cap).max(1))
     };
     let preprocess_workers = if config.quant.preprocess {
         cpu_budget
-            .saturating_sub(quant_workers.saturating_mul(quant_threads))
+            .saturating_sub(quant_threads)
             .saturating_div(preprocess_threads.max(1))
             .max(1)
-            .min(quant_workers.max(1))
+            .min(cpu_budget.saturating_div(preprocess_threads.max(1)).max(1))
     } else {
         0
     };
     SchedulerBudget {
         cpu_budget,
         reserve_workers,
+        requested_worker_budget,
         preprocess_workers,
         preprocess_threads,
         quant_workers,
         quant_threads,
+        quant_thread_cap,
+        deseq2_threads: 1,
+        corr_threads: if config.corr.threads == 0 {
+            cpu_budget
+        } else {
+            config.corr.threads.max(1).min(cpu_budget)
+        },
         download_workers: config.download.concurrency.max(1),
     }
 }
 
-fn reap_finished_tasks(tasks: &mut Vec<thread::JoinHandle<Result<()>>>) -> Result<()> {
+fn reap_finished_tasks(tasks: &mut Vec<RunningTask>) -> Result<()> {
     let mut index = 0;
     while index < tasks.len() {
-        if tasks[index].is_finished() {
-            let handle = tasks.swap_remove(index);
-            handle
+        if tasks[index].handle.is_finished() {
+            let task = tasks.swap_remove(index);
+            task.handle
                 .join()
                 .map_err(|_| anyhow::anyhow!("worker thread panicked"))??;
         } else {
@@ -2711,14 +2833,20 @@ fn print_run_progress(
         ),
         format!("Active\t{}", progress.active_detail),
         format!(
-            "Workers\tdownload {} | preprocess {}x{} | quant {}x{} | cpu_budget {} | reserve {}",
+            "Workers\tbudget {} | download {} | preprocess up_to {}x{} | quant up_to {}x{} | deseq2 {} | corr {}{}",
+            scheduler.cpu_budget,
             scheduler.download_workers,
             scheduler.preprocess_workers,
             scheduler.preprocess_threads,
             scheduler.quant_workers,
             scheduler.quant_threads,
-            scheduler.cpu_budget,
-            scheduler.reserve_workers
+            scheduler.deseq2_threads,
+            scheduler.corr_threads,
+            if scheduler.requested_worker_budget > 0 {
+                String::new()
+            } else {
+                format!(" | reserve {}", scheduler.reserve_workers)
+            }
         ),
         format!("Skipped\t{} run(s) excluded by QC gate", skipped_qc),
     ];
@@ -3017,7 +3145,7 @@ fn describe_active_work(
         "download" => format!(
             "downloading {download_active} run(s); {}/{} completed",
             runs.iter()
-                .filter(|run| matches!(run.state, RunState::Downloaded | RunState::Verified))
+                .filter(|run| is_download_complete_state(run.state))
                 .count(),
             total_runs
         ),
@@ -3535,6 +3663,188 @@ fn refresh_samplesheet(paths: &ProjectPaths, db: &Database) -> Result<()> {
         &artifacts,
         &column_map,
     )?;
+    Ok(())
+}
+
+fn configured_storage_limit_bytes(config: &ProjectConfig) -> Result<Option<u64>> {
+    let raw = config.storage.max_active_size.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(parse_size_bytes(raw)?))
+}
+
+fn project_active_storage_bytes(paths: &ProjectPaths) -> u64 {
+    [
+        &paths.raw_dir,
+        &paths.quant_dir,
+        &paths.de_dir,
+        &paths.corr_dir,
+        &paths.refs_dir,
+        &paths.metadata_dir,
+        &paths.support_dir,
+    ]
+    .into_iter()
+    .map(|path| dir_size(path))
+    .sum()
+}
+
+fn validate_deseq2_quant_inputs(
+    db: &Database,
+    paths: &ProjectPaths,
+    config: &ProjectConfig,
+    runs: &[RunRecord],
+) -> Result<Vec<RunRecord>> {
+    let artifacts = db.list_artifacts()?;
+    let mut artifacts_by_run: std::collections::HashMap<&str, Vec<&ArtifactRecord>> =
+        std::collections::HashMap::new();
+    for artifact in &artifacts {
+        if let Some(run_accession) = artifact.run_accession.as_deref() {
+            artifacts_by_run
+                .entry(run_accession)
+                .or_default()
+                .push(artifact);
+        }
+    }
+
+    let mut valid_runs = Vec::new();
+    for run in runs {
+        let run_artifacts = artifacts_by_run
+            .get(run.run_accession.as_str())
+            .cloned()
+            .unwrap_or_default();
+        let abundance_h5 = run_artifacts
+            .iter()
+            .find(|artifact| artifact.kind == ArtifactKind::QuantAbundanceH5)
+            .map(|artifact| PathBuf::from(&artifact.path))
+            .unwrap_or_else(|| {
+                paths
+                    .quant_run_dir(&run.run_accession, &config.quant.engine)
+                    .join("abundance.h5")
+            });
+        let run_info_json = run_artifacts
+            .iter()
+            .find(|artifact| artifact.kind == ArtifactKind::QuantRunInfo)
+            .map(|artifact| PathBuf::from(&artifact.path))
+            .unwrap_or_else(|| {
+                paths
+                    .quant_run_dir(&run.run_accession, &config.quant.engine)
+                    .join("run_info.json")
+            });
+
+        let missing = [
+            (&abundance_h5, "abundance.h5"),
+            (&run_info_json, "run_info.json"),
+        ]
+        .into_iter()
+        .filter_map(|(path, label)| {
+            if !path.exists() || file_size(path).unwrap_or_default() == 0 {
+                Some(format!("{label} missing or empty at {}", path.display()))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+        if missing.is_empty() {
+            valid_runs.push(run.clone());
+            continue;
+        }
+
+        let message = format!("quant outputs invalid for DE stage: {}", missing.join("; "));
+        db.set_run_state(&run.run_accession, RunState::QuantFailed, Some(&message))?;
+        db.append_event(
+            "deseq2",
+            Some(&run.run_accession),
+            "run excluded from DE due to invalid quant outputs",
+            json!({
+                "error": message,
+                "abundance_h5": abundance_h5.display().to_string(),
+                "run_info_json": run_info_json.display().to_string(),
+            }),
+        )?;
+    }
+
+    Ok(valid_runs)
+}
+
+fn write_filtered_deseq2_samplesheet(
+    db: &Database,
+    paths: &ProjectPaths,
+    runs: &[RunRecord],
+    output_path: &Path,
+) -> Result<()> {
+    let artifacts = db.list_artifacts()?;
+    let metadata_columns = db.list_metadata_columns()?;
+    let column_map = load_or_init_column_map(&paths.column_map_path(), &metadata_columns)?;
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let mut artifacts_by_run: std::collections::HashMap<String, Vec<ArtifactRecord>> =
+        std::collections::HashMap::new();
+    for artifact in artifacts {
+        if let Some(run_accession) = artifact.run_accession.clone() {
+            artifacts_by_run
+                .entry(run_accession)
+                .or_default()
+                .push(artifact);
+        }
+    }
+    let rows = build_samplesheet_rows(db.project_id(), runs, &artifacts_by_run, &column_map);
+
+    let mut extra_columns = std::collections::BTreeSet::new();
+    for row in &rows {
+        extra_columns.extend(row.metadata.keys().cloned());
+    }
+
+    let mut header: Vec<String> = [
+        "project_id",
+        "study_accession",
+        "run_accession",
+        "sample_accession",
+        "experiment_accession",
+        "library_layout",
+        "instrument_platform",
+        "instrument_model",
+        "read1_path",
+        "read2_path",
+        "condition",
+        "batch",
+    ]
+    .into_iter()
+    .map(ToString::to_string)
+    .collect();
+    header.extend(extra_columns.iter().cloned());
+
+    let mut writer = csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_path(output_path)
+        .with_context(|| format!("failed to create {}", output_path.display()))?;
+    writer.write_record(&header)?;
+    for row in &rows {
+        let mut record = vec![
+            row.project_id.clone(),
+            row.study_accession.clone(),
+            row.run_accession.clone(),
+            row.sample_accession.clone().unwrap_or_default(),
+            row.experiment_accession.clone().unwrap_or_default(),
+            row.library_layout.clone(),
+            row.instrument_platform.clone().unwrap_or_default(),
+            row.instrument_model.clone().unwrap_or_default(),
+            row.read1_path.clone().unwrap_or_default(),
+            row.read2_path.clone().unwrap_or_default(),
+            row.condition.clone().unwrap_or_default(),
+            row.batch.clone().unwrap_or_default(),
+        ];
+        record.extend(
+            extra_columns
+                .iter()
+                .map(|column| row.metadata.get(column).cloned().unwrap_or_default()),
+        );
+        writer.write_record(record)?;
+    }
+    writer.flush()?;
     Ok(())
 }
 

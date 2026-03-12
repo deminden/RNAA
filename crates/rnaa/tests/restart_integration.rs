@@ -197,6 +197,46 @@ fn record_raw_fastq(project_id: &str, run_accession: &str, path: &Path) -> Artif
     }
 }
 
+fn record_quant_artifacts(
+    paths: &ProjectPaths,
+    db: &Database,
+    project_id: &str,
+    run_accession: &str,
+) {
+    let quant_dir = paths.quant_run_dir(run_accession, "r-kallisto");
+    fs::create_dir_all(&quant_dir).expect("failed to create quant dir");
+    let abundance_h5 = quant_dir.join("abundance.h5");
+    let run_info_json = quant_dir.join("run_info.json");
+    fs::write(&abundance_h5, b"mock-h5").expect("failed to write abundance.h5");
+    fs::write(&run_info_json, b"{\"run\":\"ok\"}").expect("failed to write run_info.json");
+    db.record_artifact(&ArtifactRecord {
+        project_id: project_id.to_string(),
+        run_accession: Some(run_accession.to_string()),
+        kind: ArtifactKind::QuantAbundanceH5,
+        path: abundance_h5.display().to_string(),
+        blob_id: None,
+        shared_path: None,
+        checksum_type: "sha256".to_string(),
+        checksum: compute_sha256(&abundance_h5).expect("failed to hash abundance.h5"),
+        bytes: file_size(&abundance_h5).expect("failed to stat abundance.h5"),
+        created_at: now_rfc3339(),
+    })
+    .expect("failed to record abundance artifact");
+    db.record_artifact(&ArtifactRecord {
+        project_id: project_id.to_string(),
+        run_accession: Some(run_accession.to_string()),
+        kind: ArtifactKind::QuantRunInfo,
+        path: run_info_json.display().to_string(),
+        blob_id: None,
+        shared_path: None,
+        checksum_type: "sha256".to_string(),
+        checksum: compute_sha256(&run_info_json).expect("failed to hash run_info.json"),
+        bytes: file_size(&run_info_json).expect("failed to stat run_info.json"),
+        created_at: now_rfc3339(),
+    })
+    .expect("failed to record run info artifact");
+}
+
 #[test]
 fn quant_restart_recovers_preprocess_and_completes() {
     let temp = TempDir::new().expect("failed to create tempdir");
@@ -343,6 +383,8 @@ fn normalize_and_corr_restart_recover_project_stages() {
         })
         .collect::<Vec<_>>();
     db.upsert_runs(&runs).expect("failed to insert runs");
+    record_quant_artifacts(&paths, &db, &project_id, "RUN1");
+    record_quant_artifacts(&paths, &db, &project_id, "RUN2");
     db.set_project_stage_state("normalize", ProjectStageState::Running, None)
         .expect("failed to set project stage");
 

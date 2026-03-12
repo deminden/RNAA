@@ -7,6 +7,7 @@ use anyhow::{Context, Result, bail};
 use mincorr::{bicor, hellcor, kendall, pearson, spearman};
 use nalgebra::{DMatrix, DVector};
 use ndarray::Array2;
+use rayon::ThreadPoolBuilder;
 use rnaa_core::manifest::{ManifestArtifact, StageManifest};
 use rnaa_core::model::{AdjustedMatrix, CorrelationMethod, OutputMode};
 use rnaa_core::paths::ProjectPaths;
@@ -74,6 +75,7 @@ impl Correlator for MinCorrCorrelator {
         matrix: &AdjustedMatrix,
         method: CorrelationMethod,
         output_mode: &OutputMode,
+        threads: usize,
         paths: &ProjectPaths,
         project_id: &str,
     ) -> Result<Vec<std::path::PathBuf>> {
@@ -96,13 +98,18 @@ impl Correlator for MinCorrCorrelator {
         let data = Array2::<f64>::from_shape_vec((n_rows, n_cols), flat)
             .context("matrix shape mismatch while preparing correlation input")?;
 
-        let corr = match method {
+        let corr_threads = threads.max(1);
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(corr_threads)
+            .build()
+            .context("failed to build correlation thread pool")?;
+        let corr = pool.install(|| match method {
             CorrelationMethod::Pearson => pearson::correlation_matrix(&data),
             CorrelationMethod::Spearman => spearman::correlation_matrix(&data),
             CorrelationMethod::Kendall => kendall::correlation_matrix(&data),
             CorrelationMethod::Bicor => bicor::correlation_matrix(&data),
             CorrelationMethod::Hellcor => hellcor::correlation_matrix(&data),
-        };
+        });
 
         let corr_dir = paths.corr_project_dir(project_id);
         fs::create_dir_all(&corr_dir)
@@ -146,7 +153,8 @@ impl Correlator for MinCorrCorrelator {
             finished_at: now_rfc3339(),
             parameters: json!({
                 "method": method.to_string(),
-                "output_mode": output_mode
+                "output_mode": output_mode,
+                "threads": corr_threads
             }),
             tool_versions: BTreeMap::new(),
             input_artifacts: vec![ManifestArtifact {

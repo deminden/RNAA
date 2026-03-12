@@ -38,14 +38,16 @@ custom_cdna = ""
 
 [storage]
 shared_root = ""
+max_active_size = "" # e.g. "100GB"; pauses new downloads when project storage reaches the limit
 
 [quant]
 engine = "r-kallisto"
-threads = 16
-workers = 0 # 0 = auto, otherwise fixed number of runs in parallel
+worker_budget = 0 # 0 = auto (all available minus reserve), otherwise total CPU budget for preprocess+quant
+threads = 16 # max kallisto threads per run
+workers = 0 # optional cap on parallel quant runs; 0 = derived from worker_budget
 preprocess = false
 fastq_retention = "both" # both | original | trimmed | none
-preprocess_threads = 16
+preprocess_threads = 16 # capped at 16 per run
 preprocess_strict = true
 preprocess_max_input_mb = 1024
 cleanup = "none"
@@ -63,6 +65,9 @@ max_too_short_rate = 0.4
 [deseq2]
 design = "~ batch + condition"
 counts_from_abundance = "lengthScaledTPM"
+
+[corr]
+threads = 0 # 0 = use full worker_budget during correlation
 transform = "vst"
 
 [corr]

@@ -21,7 +21,8 @@ use rnaa_core::paths::ProjectPaths;
 use rnaa_core::state::RunState;
 use rnaa_core::traits::Downloader;
 use rnaa_core::util::{
-    compute_md5, compute_sha256, file_size, now_rfc3339, sanitize_basename, write_json_pretty,
+    compute_md5, compute_sha256, dir_size, file_size, now_rfc3339, parse_size_bytes,
+    sanitize_basename, write_json_pretty,
 };
 use serde_json::json;
 use tracing::{error, info, warn};
@@ -40,6 +41,7 @@ impl ShellDownloader {
         prefer: Option<DownloadPreference>,
     ) -> Result<()> {
         let concurrency = concurrency.max(1);
+        let storage_limit_bytes = configured_storage_limit_bytes(&config)?;
         loop {
             let runs = db.list_runs_in_states(&[
                 RunState::Resolved,
@@ -68,6 +70,16 @@ impl ShellDownloader {
                 let downloader = self.clone();
                 handles.push(thread::spawn(move || {
                     loop {
+                        if let Some(limit_bytes) = storage_limit_bytes {
+                            while project_active_storage_bytes(&paths) >= limit_bytes {
+                                info!(
+                                    "storage limit reached ({} >= {}), pausing downloads",
+                                    project_active_storage_bytes(&paths),
+                                    limit_bytes
+                                );
+                                thread::sleep(Duration::from_secs(30));
+                            }
+                        }
                         let run = {
                             let mut queue = queue.lock().expect("queue poisoned");
                             queue.pop()
@@ -193,6 +205,29 @@ impl ShellDownloader {
         }?;
         Ok(())
     }
+}
+
+fn configured_storage_limit_bytes(config: &ProjectConfig) -> Result<Option<u64>> {
+    let raw = config.storage.max_active_size.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(parse_size_bytes(raw)?))
+}
+
+fn project_active_storage_bytes(paths: &ProjectPaths) -> u64 {
+    [
+        &paths.raw_dir,
+        &paths.quant_dir,
+        &paths.de_dir,
+        &paths.corr_dir,
+        &paths.refs_dir,
+        &paths.metadata_dir,
+        &paths.support_dir,
+    ]
+    .into_iter()
+    .map(|path| dir_size(path))
+    .sum()
 }
 
 impl Downloader for ShellDownloader {

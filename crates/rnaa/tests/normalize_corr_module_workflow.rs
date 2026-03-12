@@ -4,10 +4,10 @@ use std::process::Command;
 
 use rnaa_core::Database;
 use rnaa_core::config::ProjectConfig;
-use rnaa_core::model::{LibraryLayout, RunRecord};
+use rnaa_core::model::{ArtifactKind, ArtifactRecord, LibraryLayout, RunRecord};
 use rnaa_core::paths::ProjectPaths;
 use rnaa_core::state::RunState;
-use rnaa_core::util::{compute_sha256, now_rfc3339};
+use rnaa_core::util::{compute_sha256, file_size, now_rfc3339};
 use tempfile::TempDir;
 
 fn rnaa_bin() -> &'static str {
@@ -201,6 +201,40 @@ fn normalize_then_corr_module_gmt_workflow() {
         })
         .collect::<Vec<_>>();
     db.upsert_runs(&runs).expect("failed to insert runs");
+    for run in ["RUN1", "RUN2", "RUN3"] {
+        let quant_dir = paths.quant_run_dir(run, "r-kallisto");
+        fs::create_dir_all(&quant_dir).expect("failed to create quant dir");
+        let abundance_h5 = quant_dir.join("abundance.h5");
+        let run_info_json = quant_dir.join("run_info.json");
+        fs::write(&abundance_h5, b"h5").expect("failed to write abundance.h5");
+        fs::write(&run_info_json, b"{\"run\":\"ok\"}").expect("failed to write run_info.json");
+        db.record_artifact(&ArtifactRecord {
+            project_id: project.project_id.clone(),
+            run_accession: Some(run.to_string()),
+            kind: ArtifactKind::QuantAbundanceH5,
+            path: abundance_h5.display().to_string(),
+            blob_id: None,
+            shared_path: None,
+            checksum_type: "sha256".to_string(),
+            checksum: compute_sha256(&abundance_h5).expect("failed to hash abundance.h5"),
+            bytes: file_size(&abundance_h5).expect("failed to stat abundance.h5"),
+            created_at: now_rfc3339(),
+        })
+        .expect("failed to record abundance artifact");
+        db.record_artifact(&ArtifactRecord {
+            project_id: project.project_id.clone(),
+            run_accession: Some(run.to_string()),
+            kind: ArtifactKind::QuantRunInfo,
+            path: run_info_json.display().to_string(),
+            blob_id: None,
+            shared_path: None,
+            checksum_type: "sha256".to_string(),
+            checksum: compute_sha256(&run_info_json).expect("failed to hash run_info.json"),
+            bytes: file_size(&run_info_json).expect("failed to stat run_info.json"),
+            created_at: now_rfc3339(),
+        })
+        .expect("failed to record run info artifact");
+    }
 
     let samplesheet = "project_id\tstudy_accession\trun_accession\tcondition\tbatch\n\
                       test\tSRPTEST\tRUN1\tA\tB1\n\

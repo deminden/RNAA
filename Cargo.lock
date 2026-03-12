@@ -2723,6 +2723,7 @@ dependencies = [
  "nalgebra 0.34.1",
  "ndarray",
  "num_cpus",
+ "rayon",
  "regex",
  "reqwest",
  "rnaa-core",

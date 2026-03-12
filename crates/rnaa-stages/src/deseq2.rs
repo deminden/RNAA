@@ -21,6 +21,7 @@ impl DifferentialExpression for Deseq2Runner {
     fn deseq2(
         &self,
         project_id: &str,
+        samplesheet_path: &std::path::Path,
         reference: &ReferenceBundle,
         design: &str,
         contrasts: &[ContrastSpec],
@@ -28,7 +29,6 @@ impl DifferentialExpression for Deseq2Runner {
         config: &ProjectConfig,
     ) -> Result<Vec<PathBuf>> {
         let script_path = find_deseq2_script(paths)?;
-        let samplesheet_path = paths.samplesheet_path();
         if !samplesheet_path.exists() {
             bail!(
                 "samplesheet missing at {}; run `rnaa resolve` first",
@@ -44,7 +44,7 @@ impl DifferentialExpression for Deseq2Runner {
         cmd.arg("--vanilla")
             .arg(&script_path)
             .arg("--samplesheet")
-            .arg(&samplesheet_path)
+            .arg(samplesheet_path)
             .arg("--quant-root")
             .arg(&paths.quant_dir)
             .arg("--engine")
@@ -72,6 +72,17 @@ impl DifferentialExpression for Deseq2Runner {
             .arg(&de_dir)
             .arg("--manifest-out")
             .arg(&manifest_path);
+        for env_var in [
+            "OMP_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "BLIS_NUM_THREADS",
+            "VECLIB_MAXIMUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+            "RCPP_PARALLEL_NUM_THREADS",
+        ] {
+            cmd.env(env_var, "1");
+        }
         for contrast in contrasts {
             let value = format!(
                 "{}|{}|{}|{}",
@@ -146,7 +157,7 @@ impl DifferentialExpression for Deseq2Runner {
                     path: samplesheet_path.display().to_string(),
                     checksum_type: "none".to_string(),
                     checksum: String::new(),
-                    bytes: file_size(&samplesheet_path).unwrap_or_default(),
+                    bytes: file_size(samplesheet_path).unwrap_or_default(),
                 }],
                 output_artifacts: outputs
                     .iter()

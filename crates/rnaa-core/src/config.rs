@@ -126,12 +126,16 @@ impl Default for RefsConfig {
 pub struct StorageConfig {
     #[serde(default)]
     pub shared_root: String,
+    #[serde(default)]
+    pub max_active_size: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantConfig {
     #[serde(default = "default_quant_engine")]
     pub engine: String,
+    #[serde(default = "default_worker_budget")]
+    pub worker_budget: usize,
     #[serde(default = "default_quant_threads")]
     pub threads: usize,
     #[serde(default = "default_quant_workers")]
@@ -160,6 +164,7 @@ impl Default for QuantConfig {
     fn default() -> Self {
         Self {
             engine: default_quant_engine(),
+            worker_budget: default_worker_budget(),
             threads: default_quant_threads(),
             workers: default_quant_workers(),
             preprocess: false,
@@ -207,6 +212,8 @@ pub struct CorrConfig {
     pub geneset: String,
     #[serde(default = "default_output")]
     pub output: String,
+    #[serde(default = "default_corr_threads")]
+    pub threads: usize,
 }
 
 impl Default for CorrConfig {
@@ -217,6 +224,7 @@ impl Default for CorrConfig {
             method: default_corr_method(),
             geneset: default_geneset(),
             output: default_output(),
+            threads: default_corr_threads(),
         }
     }
 }
@@ -359,6 +367,10 @@ fn default_quant_engine() -> String {
     "r-kallisto".to_string()
 }
 
+fn default_worker_budget() -> usize {
+    0
+}
+
 fn default_quant_threads() -> usize {
     16
 }
@@ -409,4 +421,8 @@ fn default_geneset() -> String {
 
 fn default_output() -> String {
     "edges:topk=50".to_string()
+}
+
+fn default_corr_threads() -> usize {
+    0
 }
