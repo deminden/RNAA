@@ -63,6 +63,8 @@ pub(crate) struct Batch {
     /// Lengths are implicit: header len = `seq_start` - `header_start`, etc.
     /// Quality ends at the next record's `header_start` (or `buf.len()` for last record)
     pub recs: Vec<[usize; 4]>,
+    // Last field: release credit only after every batch allocation has dropped.
+    pub permit: Option<Arc<crate::native::BatchPermit>>,
 }
 
 /// A single FASTQ record represented as ranges into a shared buffer
@@ -97,6 +99,7 @@ pub(crate) struct WorkerResult {
     // Adapter trimming stats
     pub adapter_trimmed_reads: usize,
     pub adapter_trimmed_bases: usize,
+    pub permit: Option<Arc<crate::native::BatchPermit>>,
 }
 
 // PAIRED-END MULTI-THREADING STRUCTURES
@@ -112,6 +115,7 @@ pub(crate) struct PairedBatch {
     pub buf_r2: Arc<Vec<u8>>,     // R2 shared buffer
     pub recs_r1: Vec<[usize; 4]>, // R1 record positions
     pub recs_r2: Vec<[usize; 4]>, // R2 record positions
+    pub permit: Option<Arc<crate::native::BatchPermit>>,
 }
 
 /// A paired-end record represented as ranges into shared buffers
@@ -153,6 +157,7 @@ pub(crate) struct PairedWorkerResult {
     // Insert size stats
     pub insert_size_histogram: Vec<usize>,
     pub insert_size_unknown: usize,
+    pub permit: Option<Arc<crate::native::BatchPermit>>,
 }
 
 /// Producer thread: read blocks and parse into batches
@@ -266,6 +271,7 @@ pub(crate) fn producer_thread(
                     id: batch_id,
                     buf: Arc::new(buffer[..complete_len].to_vec()), // Wrap in Arc for sharing
                     recs,
+                    permit: None,
                 };
                 batch_id += 1;
 
@@ -552,6 +558,7 @@ pub(crate) fn worker_thread(
 
         let result = WorkerResult {
             id: batch.id,
+            permit: batch.permit.clone(),
             pieces, // Zero-copy ranges instead of copied bytes
             before,
             after,
@@ -956,6 +963,7 @@ pub(crate) fn paired_producer_thread_with_paths(
                 buf_r2: Arc::new(data2[..adjusted_complete_len2].to_vec()),
                 recs_r1: recs1,
                 recs_r2: recs2,
+                permit: None,
             };
             batch_id += 1;
 
@@ -1675,6 +1683,7 @@ pub(crate) fn paired_worker_thread(
 
         let result = PairedWorkerResult {
             id: batch.id,
+            permit: batch.permit.clone(),
             pieces,
             before_r1,
             after_r1,

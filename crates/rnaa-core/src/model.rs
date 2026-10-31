@@ -158,7 +158,7 @@ impl RemoteFileKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteFile {
     pub url: String,
     pub md5: Option<String>,
@@ -217,9 +217,11 @@ pub enum ArtifactKind {
     Sra,
     QuantDir,
     QuantAbundanceH5,
+    QuantAbundanceTsv,
     QuantRunInfo,
     Counts,
     NormalizedCounts,
+    SizeFactors,
     Vst,
     VstRds,
     DeTable,
@@ -251,9 +253,11 @@ impl ArtifactKind {
             Self::Sra => "SRA",
             Self::QuantDir => "KALLISTO_DIR",
             Self::QuantAbundanceH5 => "ABUNDANCE_H5",
+            Self::QuantAbundanceTsv => "ABUNDANCE_TSV",
             Self::QuantRunInfo => "RUN_INFO_JSON",
             Self::Counts => "COUNTS",
             Self::NormalizedCounts => "NORM_COUNTS",
+            Self::SizeFactors => "SIZE_FACTORS",
             Self::Vst => "VST",
             Self::VstRds => "VST_RDS",
             Self::DeTable => "DE_TABLE",
@@ -295,9 +299,11 @@ impl FromStr for ArtifactKind {
             "SRA" => Ok(Self::Sra),
             "KALLISTO_DIR" => Ok(Self::QuantDir),
             "ABUNDANCE_H5" => Ok(Self::QuantAbundanceH5),
+            "ABUNDANCE_TSV" => Ok(Self::QuantAbundanceTsv),
             "RUN_INFO_JSON" => Ok(Self::QuantRunInfo),
             "COUNTS" => Ok(Self::Counts),
             "NORM_COUNTS" => Ok(Self::NormalizedCounts),
+            "SIZE_FACTORS" => Ok(Self::SizeFactors),
             "VST" => Ok(Self::Vst),
             "VST_RDS" => Ok(Self::VstRds),
             "DE_TABLE" => Ok(Self::DeTable),
@@ -385,7 +391,7 @@ pub struct ContrastSpec {
 
 impl ContrastSpec {
     pub fn new(name: Option<String>, factor: String, level_a: String, level_b: String) -> Self {
-        let auto_name = format!("{factor}_{level_a}_vs_{level_b}");
+        let auto_name = crate::util::sanitize_basename(&format!("{factor}_{level_a}_vs_{level_b}"));
         Self {
             name: name.unwrap_or(auto_name),
             factor,

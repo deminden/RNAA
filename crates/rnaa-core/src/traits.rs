@@ -38,6 +38,7 @@ pub trait ReferenceManager: Send + Sync {
     fn ensure_reference(
         &self,
         paths: &ProjectPaths,
+        db: &crate::Database,
         config: &ProjectConfig,
     ) -> Result<ReferenceBundle>;
 }

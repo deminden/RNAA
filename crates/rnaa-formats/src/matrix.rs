@@ -14,9 +14,67 @@ pub struct MatrixData {
     pub values: Vec<Vec<f64>>,
 }
 
+impl MatrixData {
+    pub fn validate(&self) -> Result<()> {
+        use std::collections::BTreeSet;
+        if self.row_ids.is_empty()
+            || self.col_ids.is_empty()
+            || self.row_ids.len() != self.values.len()
+        {
+            bail!("matrix must have nonempty rows/columns and one value row per gene ID");
+        }
+        for (label, ids) in [("gene", &self.row_ids), ("sample", &self.col_ids)] {
+            let unique = ids.iter().collect::<BTreeSet<_>>();
+            if unique.len() != ids.len() || ids.iter().any(|id| id.trim().is_empty()) {
+                bail!("matrix contains duplicate or empty {label} IDs");
+            }
+        }
+        for row in &self.values {
+            if row.len() != self.col_ids.len() || row.iter().any(|value| !value.is_finite()) {
+                bail!("matrix values must be finite and match the sample dimensions");
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn read_matrix_tsv(path: &Path) -> Result<MatrixData> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     read_matrix_from_reader(file)
+}
+
+/// Read only sample identifiers, rejecting files that differ from the admitted size.
+pub fn read_matrix_columns_exact(path: &Path, admitted_bytes: u64) -> Result<Vec<String>> {
+    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() != admitted_bytes {
+        bail!("matrix size changed after resource admission");
+    }
+    let limit = admitted_bytes
+        .checked_add(1)
+        .context("matrix size overflow")?;
+    let mut reader = ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_reader(file.take(limit));
+    let columns = reader
+        .headers()?
+        .iter()
+        .skip(1)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if reader.position().byte() > admitted_bytes
+        || reader.get_ref().get_ref().metadata()?.len() != admitted_bytes
+    {
+        bail!("matrix size changed after resource admission");
+    }
+    let unique = columns.iter().collect::<std::collections::BTreeSet<_>>();
+    if columns.is_empty()
+        || unique.len() != columns.len()
+        || columns.iter().any(|id| id.trim().is_empty())
+    {
+        bail!("matrix contains duplicate or empty sample IDs");
+    }
+    Ok(columns)
 }
 
 pub fn read_matrix_maybe_gzip(path: &Path) -> Result<MatrixData> {
@@ -44,6 +102,7 @@ pub fn read_first_matrix_from_tar_gz(path: &Path) -> Result<MatrixData> {
 }
 
 pub fn write_matrix_tsv(path: &Path, matrix: &MatrixData) -> Result<()> {
+    matrix.validate()?;
     let mut writer = WriterBuilder::new()
         .delimiter(b'\t')
         .from_path(path)
@@ -96,9 +155,36 @@ fn read_matrix_from_reader<R: Read>(reader: R) -> Result<MatrixData> {
             .collect::<Result<Vec<_>>>()?;
         values.push(row_values);
     }
-    Ok(MatrixData {
+    let matrix = MatrixData {
         row_ids,
         col_ids,
         values,
-    })
+    };
+    matrix.validate()?;
+    Ok(matrix)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rejects_nonfinite_values_duplicate_ids_and_wrong_dimensions() {
+        for input in [
+            "gene_id\tS\nG\tNaN\n",
+            "gene_id\tS\tS\nG\t1\t2\n",
+            "gene_id\tS\nG\t1\nG\t2\n",
+            "gene_id\tS\nG\t1\t2\n",
+        ] {
+            assert!(read_matrix_from_reader(input.as_bytes()).is_err());
+        }
+        let matrix = MatrixData {
+            row_ids: vec!["G".into()],
+            col_ids: vec!["S".into()],
+            values: vec![],
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("matrix.tsv");
+        assert!(write_matrix_tsv(&path, &matrix).is_err());
+        assert!(!path.exists());
+    }
 }

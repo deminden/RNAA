@@ -1,0 +1,128 @@
+{
+  "recorded_at_utc": "2026-10-31T06:11:55.572319+00:00",
+  "platform": "Ubuntu 24.04.5 ARM64 VM",
+  "study": "PRJNA675088",
+  "source_snapshot_sha256": "cbe80b892a59e39e7b95a2fe18943f77b7a3dc24459fc6d9a786ba44e26ef296",
+  "binary_sha256": "b9ab99a14d268078ae7427025e205e32835e50e7ae4b40282e7cb2ca5ac1cf21",
+  "summary": {
+    "samples": 4,
+    "gene_count": 6612,
+    "correlation_genes": 1000,
+    "stratification": {
+      "Cordycepin": 2,
+      "DMSO": 2
+    },
+    "read_sha256_verified": 4,
+    "unchanged_generation_heads_after_repeat": 11,
+    "doctor_ok": true,
+    "summary": {
+      "correlation_dense_tables": 0,
+      "correlation_edge_tables": 2,
+      "correlation_gene_count": 1000,
+      "differential_tables": 2,
+      "enrichment_tables": 0,
+      "gene_count": 6612,
+      "metadata_columns": [
+        "sample_id",
+        "biological_sample_id",
+        "identity_source",
+        "run_accessions",
+        "batch",
+        "condition",
+        "ena_primary_study_accession",
+        "ena_secondary_sample_accession",
+        "ena_secondary_study_accession",
+        "experiment_accession",
+        "instrument_model",
+        "instrument_platform",
+        "library_layout",
+        "project_id",
+        "read1_path",
+        "read2_path",
+        "sample_accession",
+        "study_accession"
+      ],
+      "module_tables": 0,
+      "sample_count": 4,
+      "schema_version": 1,
+      "scope": "frozen biological-sample metadata from the selected analysis generation",
+      "stratification": {
+        "column": "condition",
+        "levels": {
+          "Cordycepin": 2,
+          "DMSO": 2
+        },
+        "missing": 0
+      }
+    }
+  },
+  "outputs": {
+    "de/gene_counts.tsv": {
+      "sha256": "defd05679b4818dbfa5faa8163c05320a1ed274ee432e1e6be63bb58b63852e6",
+      "bytes": 107139,
+      "data_rows": 6612
+    },
+    "de/gene_norm_counts.tsv": {
+      "sha256": "00a6e4af0f9bbf98398eb870b037ec1cffb84dffb78ac5fcb44161ea330b8568",
+      "bytes": 138303,
+      "data_rows": 6612
+    },
+    "de/vst.tsv": {
+      "sha256": "e7ab03e4cd6dab6548725d153174276a83e4a76e5599b60e7e24e5fbe2cd21a6",
+      "bytes": 529351,
+      "data_rows": 6612
+    },
+    "de/de_condition_DMSO_vs_Cordycepin.tsv": {
+      "sha256": "9c44e36ac12891cf29bf67e1ddfab68cb998cad55989658e320b297d27ab3726",
+      "bytes": 252924,
+      "data_rows": 6612
+    },
+    "corr/edges_topk.tsv": {
+      "sha256": "90767b03fee92042655919fbbf8c57910380a680f24985356c53c5c4cf93b9e7",
+      "bytes": 186474,
+      "data_rows": 10000
+    }
+  },
+  "cross_platform": {
+    "equal_sha256": [
+      "de/gene_counts.tsv",
+      "de/gene_norm_counts.tsv",
+      "de/vst.tsv",
+      "corr/edges_topk.tsv"
+    ],
+    "different_sha256": [
+      "de/de_condition_DMSO_vs_Cordycepin.tsv"
+    ],
+    "de_numeric_differences": {
+      "log2FoldChange": {
+        "cells": 3,
+        "max_abs": 8.881784197001252e-16,
+        "max_rel": 5.4358814162777927e-14
+      },
+      "stat": {
+        "cells": 4,
+        "max_abs": 3.1086244689504383e-15,
+        "max_rel": 5.4383714853607053e-14
+      },
+      "pvalue": {
+        "cells": 4,
+        "max_abs": 1.1102230246251565e-15,
+        "max_rel": 5.385429748712779e-15
+      },
+      "lfcSE": {
+        "cells": 2,
+        "max_abs": 9.992007221626409e-16,
+        "max_rel": 2.3184862997832374e-15
+      }
+    },
+    "scope": "One four-sample execution; not a scientific parity gate."
+  },
+  "tutorial_log": {
+    "path": "validation/real-data-smoke/2026-10-31-tutorial-linux.log",
+    "sha256": "818d8f43d4767e25ce3ff60d8eaeab740bd520e187ed304dc7f9350b1d878489"
+  },
+  "limitations": [
+    "Dirty local snapshot; not a published release or final clean-commit qualification.",
+    "No production-scale or x86-64 claim; DESeq2 remains unchanged."
+  ]
+}

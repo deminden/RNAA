@@ -1,0 +1,145 @@
+{
+  "recorded_at_utc": "2026-10-31T05:59:15.816079+00:00",
+  "platform": "macOS ARM64",
+  "study": "PRJNA675088",
+  "organism": "Saccharomyces cerevisiae",
+  "reference": {
+    "provider": "Ensembl Fungi",
+    "release": 63,
+    "assembly": "R64-1-1",
+    "files": [
+      {
+        "name": "Saccharomyces_cerevisiae.R64-1-1.cdna.all.fa.gz",
+        "url": "https://ftp.ebi.ac.uk/ensemblgenomes/pub/release-63/fungi/fasta/saccharomyces_cerevisiae/cdna/Saccharomyces_cerevisiae.R64-1-1.cdna.all.fa.gz",
+        "bytes": 3806426,
+        "sha256": "3cc5b6bb7ff166cffac5c45317dad7052d06431f43f709ed14b33779702dc6a4"
+      },
+      {
+        "name": "Saccharomyces_cerevisiae.R64-1-1.63.gtf.gz",
+        "url": "https://ftp.ebi.ac.uk/ensemblgenomes/pub/release-63/fungi/gtf/saccharomyces_cerevisiae/Saccharomyces_cerevisiae.R64-1-1.63.gtf.gz",
+        "bytes": 595453,
+        "sha256": "253bd4013785b3c85a6a488bd541c12d8264aa4989046c3530d0d9ea2ecc931e"
+      }
+    ]
+  },
+  "reads": [
+    {
+      "run": "SRR12999707",
+      "condition": "DMSO",
+      "bytes": 15021221,
+      "sha256": "e022f06bfbeaacf7cf64159affe1d800ddf2e3f10ea7f9e04df768096f7e0caa"
+    },
+    {
+      "run": "SRR12999708",
+      "condition": "DMSO",
+      "bytes": 18682400,
+      "sha256": "433a727da8b9bb92922c1dd65e256e3d903bec857bfc39b4025ea997c9a75151"
+    },
+    {
+      "run": "SRR12999711",
+      "condition": "Cordycepin",
+      "bytes": 20719127,
+      "sha256": "635e29cbe432bc5158ae3f8e9be214730d9bff559743f51383d980ee716d4f2b"
+    },
+    {
+      "run": "SRR12999712",
+      "condition": "Cordycepin",
+      "bytes": 21100786,
+      "sha256": "a15eb7e91b0763a065ac68a45376381e7fcac6a7f1707362e5b512554de7b1c7"
+    }
+  ],
+  "runtime": {
+    "kallistors": "0.6.0",
+    "mincorr": "0.2.1",
+    "mincorr_revision": "83d9ee4c5a099e24c3e0e4a3461ea893b72017d4",
+    "rsdeseq2": "0.3.1",
+    "rsfgsea": "0.4.0"
+  },
+  "package": {
+    "label": "0.3.0-rc.1-macos-exact",
+    "binary_sha256": "ed1b0cdac63eba097f01379858b59082808c273e5af7a8599f34c83b212bbecd",
+    "manifest_sha256": "347a037af878d6b049a7e8dc705c4a30e86e56f26cf6ac2be183e04dd24dd109",
+    "workspace_code_files_match_current": 360
+  },
+  "tutorial_sha256": "bd98c3fe097499b01ce48a19868f5430b1dba3c2ad5de07ce81c9044f3f2ca8c",
+  "summary": {
+    "correlation_dense_tables": 0,
+    "correlation_edge_tables": 2,
+    "correlation_gene_count": 1000,
+    "differential_tables": 2,
+    "enrichment_tables": 0,
+    "gene_count": 6612,
+    "metadata_columns": [
+      "sample_id",
+      "biological_sample_id",
+      "identity_source",
+      "run_accessions",
+      "batch",
+      "condition",
+      "ena_primary_study_accession",
+      "ena_secondary_sample_accession",
+      "ena_secondary_study_accession",
+      "experiment_accession",
+      "instrument_model",
+      "instrument_platform",
+      "library_layout",
+      "project_id",
+      "read1_path",
+      "read2_path",
+      "sample_accession",
+      "study_accession"
+    ],
+    "module_tables": 0,
+    "sample_count": 4,
+    "schema_version": 1,
+    "scope": "frozen biological-sample metadata from the selected analysis generation",
+    "stratification": {
+      "column": "condition",
+      "levels": {
+        "Cordycepin": 2,
+        "DMSO": 2
+      },
+      "missing": 0
+    }
+  },
+  "outputs": {
+    "de/gene_counts.tsv": {
+      "sha256": "defd05679b4818dbfa5faa8163c05320a1ed274ee432e1e6be63bb58b63852e6",
+      "bytes": 107139,
+      "data_rows": 6612
+    },
+    "de/gene_norm_counts.tsv": {
+      "sha256": "00a6e4af0f9bbf98398eb870b037ec1cffb84dffb78ac5fcb44161ea330b8568",
+      "bytes": 138303,
+      "data_rows": 6612
+    },
+    "de/vst.tsv": {
+      "sha256": "e7ab03e4cd6dab6548725d153174276a83e4a76e5599b60e7e24e5fbe2cd21a6",
+      "bytes": 529351,
+      "data_rows": 6612
+    },
+    "de/de_condition_DMSO_vs_Cordycepin.tsv": {
+      "sha256": "ca2098e84a3b00fde3d3b198440002c53830bdfd1f2d6bbbaf2bbd35e503f06b",
+      "bytes": 252926,
+      "data_rows": 6612
+    },
+    "corr/edges_topk.tsv": {
+      "sha256": "90767b03fee92042655919fbbf8c57910380a680f24985356c53c5c4cf93b9e7",
+      "bytes": 186474,
+      "data_rows": 10000
+    }
+  },
+  "restart_generation_heads_unchanged": 11,
+  "doctor_ok": true,
+  "logs": {
+    "tutorial.log": {
+      "path": "validation/real-data-smoke/2026-10-31-tutorial.log",
+      "sha256": "fd98673c8af6c1639a006ba3d9473084a592f7141606836ce57a92031650b953"
+    },
+    "tutorial-repeat.log": {
+      "path": "validation/real-data-smoke/2026-10-31-tutorial-repeat.log",
+      "sha256": "a2671a201bd85833295db0adb79e5d77a88f01270fc92b7f439589c1a2d6bd6b"
+    }
+  },
+  "scope": "Public-data execution check of the bundled CLI; no DESeq2 parity or biological conclusion. The packaged runtime predates subsequent packaging-script and tutorial changes, and the worktree was dirty."
+}

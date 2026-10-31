@@ -2,6 +2,8 @@
 /.idea
 /.vscode
 /logs/
+/.rnaa-locks/
+/.rnaa_generations/
 /raw/
 /quant/
 /de/
@@ -17,3 +19,8 @@
 *.sqlite-shm
 *.sqlite-wal
 *.Zone.Identifier
+
+/.rnaa_transfers
+
+__pycache__/
+*.py[cod]

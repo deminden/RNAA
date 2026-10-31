@@ -8,6 +8,9 @@ use serde::Serialize;
 
 use crate::model::{ArtifactKind, ArtifactRecord, RunRecord, SamplesheetRow};
 
+pub mod publication;
+mod table;
+
 const STABLE_COLUMNS: &[&str] = &[
     "project_id",
     "study_accession",
@@ -103,6 +106,20 @@ pub fn write_samplesheet(
     artifacts: &[ArtifactRecord],
     column_map: &ColumnMap,
 ) -> Result<Vec<SamplesheetRow>> {
+    let (bytes, rows) = render_samplesheet(project_id, runs, artifacts, column_map)?;
+    crate::util::publish_file(path, |staged| {
+        fs::write(staged, &bytes)?;
+        Ok(())
+    })?;
+    Ok(rows)
+}
+
+pub fn render_samplesheet(
+    project_id: &str,
+    runs: &[RunRecord],
+    artifacts: &[ArtifactRecord],
+    column_map: &ColumnMap,
+) -> Result<(Vec<u8>, Vec<SamplesheetRow>)> {
     let artifacts_by_run = group_artifacts_by_run(artifacts);
     let rows = build_samplesheet_rows(project_id, runs, &artifacts_by_run, column_map);
 
@@ -116,8 +133,7 @@ pub fn write_samplesheet(
 
     let mut writer = WriterBuilder::new()
         .delimiter(b'\t')
-        .from_path(path)
-        .with_context(|| format!("failed to create {}", path.display()))?;
+        .from_writer(Vec::new());
     writer.write_record(&header)?;
 
     for row in &rows {
@@ -144,7 +160,7 @@ pub fn write_samplesheet(
     }
     writer.flush()?;
 
-    Ok(rows)
+    Ok((writer.into_inner()?, rows))
 }
 
 pub fn build_samplesheet_rows(
@@ -169,6 +185,8 @@ pub fn build_samplesheet_rows(
                 }
             }
         }
+        // Provider overrides must not create duplicate canonical identity columns.
+        metadata.retain(|name, _| !STABLE_COLUMNS.contains(&name.as_str()));
 
         let read1_path = artifacts_by_run
             .get(&run.run_accession)

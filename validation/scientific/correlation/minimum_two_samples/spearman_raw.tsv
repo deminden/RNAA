@@ -1,0 +1,5 @@
+gene_id	up	down	constant	other
+up	1	-1	NA	-1
+down	-1	1	NA	1
+constant	NA	NA	1	NA
+other	-1	1	NA	1

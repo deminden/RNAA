@@ -2,6 +2,7 @@
 name = "rnaa"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
@@ -9,16 +10,21 @@ anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
 csv.workspace = true
+hex.workspace = true
+libc.workspace = true
 regex.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
-which.workspace = true
-
 rnaa-core = { path = "../rnaa-core" }
 rnaa-stages = { path = "../rnaa-stages" }
 rnaa-formats = { path = "../rnaa-formats" }
 
 [dev-dependencies]
-tempfile.workspace = true
+kallistors.workspace = true
+flate2.workspace = true

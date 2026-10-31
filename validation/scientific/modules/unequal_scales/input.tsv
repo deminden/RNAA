@@ -1,0 +1,5 @@
+gene_id	sample1	sample2	sample3	sample4	sample5	sample6	sample7	sample8
+gene1	1000	2000	4000	3000	6000	5000	8000	9000
+gene2	0.03	0.01	0.04	0.02	0.05	0.08	0.06	0.07
+gene3	0	1	0	3	1	2	4	2
+gene4	4	3	5	1	2	0	-1	-3

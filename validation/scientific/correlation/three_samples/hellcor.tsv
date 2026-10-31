@@ -1,0 +1,5 @@
+gene_id	up	tied	down	constant
+up	1	0	0	NA
+tied	0	1	0	NA
+down	0	0	1	NA
+constant	NA	NA	NA	NA

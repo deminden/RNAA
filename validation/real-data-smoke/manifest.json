@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-15",
+  "purpose": "native-rust-real-data-smoke",
+  "study": {
+    "bioproject": "PRJNA675088",
+    "organism": "Saccharomyces cerevisiae",
+    "strain": "BY4741",
+    "design": "two 4tU + cordycepin samples and two DMSO controls at 40 minutes",
+    "source": "https://www.ncbi.nlm.nih.gov/bioproject/PRJNA675088"
+  },
+  "reference": {
+    "provider": "Ensembl Fungi",
+    "release": 63,
+    "assembly": "R64-1-1",
+    "files": [
+      {
+        "name": "Saccharomyces_cerevisiae.R64-1-1.cdna.all.fa.gz",
+        "url": "https://ftp.ebi.ac.uk/ensemblgenomes/pub/release-63/fungi/fasta/saccharomyces_cerevisiae/cdna/Saccharomyces_cerevisiae.R64-1-1.cdna.all.fa.gz",
+        "bytes": 3806426,
+        "sha256": "3cc5b6bb7ff166cffac5c45317dad7052d06431f43f709ed14b33779702dc6a4"
+      },
+      {
+        "name": "Saccharomyces_cerevisiae.R64-1-1.63.gtf.gz",
+        "url": "https://ftp.ebi.ac.uk/ensemblgenomes/pub/release-63/fungi/gtf/saccharomyces_cerevisiae/Saccharomyces_cerevisiae.R64-1-1.63.gtf.gz",
+        "bytes": 595453,
+        "sha256": "253bd4013785b3c85a6a488bd541c12d8264aa4989046c3530d0d9ea2ecc931e"
+      }
+    ]
+  },
+  "samples": [
+    {
+      "run": "SRR12999707",
+      "condition": "DMSO",
+      "reads": 89234,
+      "fastq_bytes": 15021221,
+      "ena_md5": "597aec58c1d0b43bc2b514d805e5a401",
+      "downloaded_sha256": "e022f06bfbeaacf7cf64159affe1d800ddf2e3f10ea7f9e04df768096f7e0caa",
+      "abundance_sha256": "44dc0ff0eabe92804a9b88f0839197d3bcc6fd253da061becaf3babf2b5d2e6c"
+    },
+    {
+      "run": "SRR12999708",
+      "condition": "DMSO",
+      "reads": 109901,
+      "fastq_bytes": 18682400,
+      "ena_md5": "e78c13cd94c08869e8457e563d5e853a",
+      "downloaded_sha256": "433a727da8b9bb92922c1dd65e256e3d903bec857bfc39b4025ea997c9a75151",
+      "abundance_sha256": "10c42b75a32bc8c7eb32cbc8533c0771176dfac9d30112df17ac279e0a600684"
+    },
+    {
+      "run": "SRR12999711",
+      "condition": "Cordycepin",
+      "reads": 134282,
+      "fastq_bytes": 20719127,
+      "ena_md5": "9d1ed6975cef82fb87874a30dd69cb3a",
+      "downloaded_sha256": "635e29cbe432bc5158ae3f8e9be214730d9bff559743f51383d980ee716d4f2b",
+      "abundance_sha256": "655db22fd8d4c55a690abaf60d6b673273e8cab136e46d52e75263b413430ab8"
+    },
+    {
+      "run": "SRR12999712",
+      "condition": "Cordycepin",
+      "reads": 138347,
+      "fastq_bytes": 21100786,
+      "ena_md5": "47d329fc9467a9b20279dd4f559da215",
+      "downloaded_sha256": "a15eb7e91b0763a065ac68a45376381e7fcac6a7f1707362e5b512554de7b1c7",
+      "abundance_sha256": "adf766fc2e19bcda98cc62419111c90bf7bcb444264abab2aa5bd485ca684f66"
+    }
+  ],
+  "engines": {
+    "rnaa": "0.2.1",
+    "kallistors": "0.5.0",
+    "rsdeseq2": "0.3.1",
+    "rsfgsea": "0.4.0"
+  },
+  "parameters": {
+    "quant_threads": 2,
+    "quant_workers": 1,
+    "preprocessing": false,
+    "counts_from_abundance": "lengthScaledTPM",
+    "de_design": "~ condition",
+    "de_contrast": "condition DMSO Cordycepin",
+    "correlation_method": "spearman",
+    "correlation_output": "edges:topk=10"
+  },
+  "outcome": {
+    "downloads": "4/4",
+    "quantification": "4/4",
+    "differential_expression": "1/1",
+    "correlation": "1/1",
+    "gene_count_matrix_rows": 6612,
+    "genes_with_any_nonzero_count": 1436,
+    "de_rows": 6612,
+    "de_tested_rows": 1436,
+    "de_padj_below_0_05": 7,
+    "de_output_sha256": "802c42b0a9f45589144f37fa102ee2f97a6ec9729dc20e83f8065c5e8cbb08b3",
+    "gene_counts_sha256": "da78c9666b060b96116ce1e0ef818f48b4299690f1b9f0c845a8dd96c31e1099",
+    "normalized_counts_sha256": "787516e7bc3af84fa972667bff5a50249833a814fca9dedfe156e57ba05a34d4",
+    "vst_sha256": "196f95fd8cad8f5f778d06c7aa8db89d164a46893e5a7ae7148e9350da0b54ad",
+    "correlation_edges_sha256": "27c24575137dfa1b7812fd71c3e555538f8bded7c3e522069a9931d39aaba059"
+  },
+  "limitations": [
+    "The shallow four-sample dataset verifies pipeline execution, not biological validity or parity with the former R implementation.",
+    "Validation after converting the legacy integration scaffolding: cargo fmt --all -- --check, cargo clippy --workspace --all-targets --all-features -- -D warnings, and cargo test --workspace --all-features all pass."
+  ]
+}

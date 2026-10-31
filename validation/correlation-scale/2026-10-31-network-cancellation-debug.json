@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-31T07:07:24.892234+00:00",
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "architecture": "arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1\n",
+  "measurement": "separate process per size; RSS includes startup and input generation",
+  "scope": "deterministic synthetic network/module probe; not a production cohort or supported-host release qualification",
+  "source_sha256": {
+    "Cargo.lock": "e2492a4e4b81b83654bdd260f50567ad034ceae4bebcd65cfdf287aa47bb47af",
+    "crates/rnaa-core/src/config.rs": "9466d84d594beee3e06e85c1f0cacfdd7e5ee01eed6dfb26d347e0eab179c959",
+    "crates/rnaa-stages/examples/correlation_scale.rs": "915299ffdd5ca162e1402c730d35260a96fefc9569a94aba88a92ba01af5a464",
+    "crates/rnaa-stages/examples/module_scale.rs": "d07b5cc3fce46579fe14eaaf906dc692ce8806d6abab1b756d0661c108c5aea6",
+    "crates/rnaa-stages/examples/support/mod.rs": "14e86e394ae3bbc2dbfec312f99d00c11cc3a6475b75e2d49678efe4e265b88e",
+    "crates/rnaa-stages/src/corr/limits.rs": "e111069477604337aaedc753fa69de4e5ed64931d676ca4409f5c7344d25e181",
+    "crates/rnaa-stages/src/corr/mod.rs": "bd543902a27b9b0f09a44be6b1704818e913be9891966d5bf8b7c664661a3c3d",
+    "crates/rnaa-stages/src/corr/modules/admission.rs": "0476f15a635bb879b4919c763d2b1745b1c69fce0b7aa4277822c14321164137",
+    "crates/rnaa-stages/src/corr/modules/graph.rs": "b8260234c7f09525ac5298f532156ea53ed84c59966838c05f0c811865df5e1e",
+    "crates/rnaa-stages/src/corr/modules/mod.rs": "e0519199c9514cb508fb538f0809a0ccd9cce1762316eaaf95232d29dd24fdaa",
+    "crates/rnaa-stages/src/corr/modules/output.rs": "61a643dce07fd92146f137c9936fecd85e8c487c136f76188045443be49a1daa",
+    "crates/rnaa-stages/src/corr/modules/pca.rs": "45c1196e4228b45b4c19564fb487f5701a05dad2d7abbabf3dfe37454809675e",
+    "crates/rnaa-stages/src/corr/modules/ranking.rs": "df2120c539b292d989699f858d827f0be592fa89bc89e37e1ed12f3ed98c9076",
+    "crates/rnaa-stages/src/corr/modules/workflow.rs": "1c88279a7d1ab85a98c82b8157bef76744e68e124e7632d63754c645c4b954b5",
+    "crates/rnaa-stages/src/corr/network.rs": "69ae29615473eaf165907eba4b2c60e6957f14e96b7c430b5a15670f1b317d7d",
+    "crates/rnaa-stages/src/corr/prepared.rs": "a177b9334c1025e45f3cb5a2416f557b980c9a6850c0f6661afeed66c5a0e330",
+    "crates/rnaa-stages/src/corr/residualize.rs": "dc4654125ffb65a300451a484f85ffd52736416d2ab66a5d1adfe1e566826878",
+    "crates/rnaa-stages/src/corr/stream.rs": "f690921b862d28447eb27e8a9a9fc09bfb979fae7190c59deaf53c94ba789174"
+  },
+  "runs": [
+    {
+      "block_rows": 64,
+      "correlation_wall_seconds": 1.531880459,
+      "genes": 2000,
+      "input_bytes": 212630,
+      "k": 10,
+      "method": "pearson",
+      "output_bytes": 868005,
+      "profile": "debug",
+      "resource_estimate": {
+        "genes": 2000,
+        "input_bytes": 212630,
+        "output_bytes": 7701024,
+        "samples": 16,
+        "working_bytes": 1715515
+      },
+      "samples": 16,
+      "statistics": {
+        "evaluated_entries": 4000000,
+        "peak_block_entries": 4096,
+        "peak_retained_edges": 640,
+        "peak_stripe_entries": 0,
+        "undefined_entries": 0
+      },
+      "threads": 2,
+      "process_max_rss_bytes": 9207808,
+      "time_stderr": "        1.81 real         2.63 user         0.02 sys\n             9207808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 761  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                4180  involuntary context switches\n         37003235751  instructions retired\n         11160897467  cycles elapsed\n             3326408  peak memory footprint\n",
+      "hypothetical_single_dense_f64_bytes": 32000000
+    },
+    {
+      "block_rows": 64,
+      "correlation_wall_seconds": 5.863898166,
+      "genes": 4000,
+      "input_bytes": 425084,
+      "k": 10,
+      "method": "pearson",
+      "output_bytes": 1735543,
+      "profile": "debug",
+      "resource_estimate": {
+        "genes": 4000,
+        "input_bytes": 425084,
+        "output_bytes": 15401024,
+        "samples": 16,
+        "working_bytes": 3317515
+      },
+      "samples": 16,
+      "statistics": {
+        "evaluated_entries": 16000000,
+        "peak_block_entries": 4096,
+        "peak_retained_edges": 640,
+        "peak_stripe_entries": 0,
+        "undefined_entries": 0
+      },
+      "threads": 2,
+      "process_max_rss_bytes": 9912320,
+      "time_stderr": "        5.87 real        10.36 user         0.05 sys\n             9912320  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 805  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n               16390  involuntary context switches\n        146504044526  instructions retired\n         44325863938  cycles elapsed\n             4047328  peak memory footprint\n",
+      "hypothetical_single_dense_f64_bytes": 128000000
+    }
+  ]
+}

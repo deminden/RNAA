@@ -1,0 +1,7 @@
+gene_id	sample1	sample2	sample3	sample4	sample5	sample6	sample7	sample8
+ties	1	1	2	3	4	4	5	7
+inverse	10	9	8	7	6	5	4	3
+outlier	1	2	1	2	1	2	1	50
+zero_mad	1	1	1	1	1	1	1	9
+constant	3	3	3	3	3	3	3	3
+nonlinear	-4	-1	0	1	4	9	16	25

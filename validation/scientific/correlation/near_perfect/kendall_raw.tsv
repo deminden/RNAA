@@ -1,0 +1,6 @@
+gene_id	up	almost_up	inverse	irregular	constant
+up	1	1	-1	0.714285714285714	NA
+almost_up	1	1	-1	0.714285714285714	NA
+inverse	-1	-1	1	-0.714285714285714	NA
+irregular	0.714285714285714	0.714285714285714	-0.714285714285714	1	NA
+constant	NA	NA	NA	NA	1

@@ -1,4 +1,9 @@
+use rnaa_core::traits::ReferenceManager;
 use std::fs;
+use std::io::Write;
+
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -31,123 +36,39 @@ fn run_ok(args: &[&str], extra_path: Option<&Path>) {
     );
 }
 
-fn make_mock_rscript(bin_dir: &Path) {
-    let script = r#"#!/usr/bin/env bash
-set -euo pipefail
-outdir=""
-manifest=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --outdir) outdir="$2"; shift 2;;
-    --manifest-out) manifest="$2"; shift 2;;
-    *) shift;;
-  esac
-done
-mkdir -p "$outdir"
-cat > "$outdir/gene_counts.tsv" <<'EOF'
-gene_id	RUN1	RUN2	RUN3
-G1	100	120	110
-G2	200	180	190
-G3	50	60	55
-G4	10	14	12
-G5	70	76	73
-G6	300	330	320
-EOF
-cat > "$outdir/gene_counts_annotated.tsv" <<'EOF'
-gene_id	gene_symbol	gene_biotype	RUN1	RUN2	RUN3
-G1	Gene1	protein_coding	100	120	110
-G2	Gene2	protein_coding	200	180	190
-G3	Gene3	protein_coding	50	60	55
-G4	Gene4	protein_coding	10	14	12
-G5	Gene5	protein_coding	70	76	73
-G6	Gene6	protein_coding	300	330	320
-EOF
-cat > "$outdir/gene_norm_counts.tsv" <<'EOF'
-gene_id	RUN1	RUN2	RUN3
-G1	10.0	12.0	11.0
-G2	20.0	18.0	19.0
-G3	5.0	6.0	5.5
-G4	1.0	1.4	1.2
-G5	7.0	7.6	7.3
-G6	30.0	33.0	32.0
-EOF
-cat > "$outdir/gene_norm_counts_annotated.tsv" <<'EOF'
-gene_id	gene_symbol	gene_biotype	RUN1	RUN2	RUN3
-G1	Gene1	protein_coding	10.0	12.0	11.0
-G2	Gene2	protein_coding	20.0	18.0	19.0
-G3	Gene3	protein_coding	5.0	6.0	5.5
-G4	Gene4	protein_coding	1.0	1.4	1.2
-G5	Gene5	protein_coding	7.0	7.6	7.3
-G6	Gene6	protein_coding	30.0	33.0	32.0
-EOF
-cat > "$outdir/vst.tsv" <<'EOF'
-gene_id	RUN1	RUN2	RUN3
-G1	2.1	2.4	2.2
-G2	3.1	2.9	3.0
-G3	1.5	1.7	1.6
-G4	0.4	0.5	0.45
-G5	1.9	2.0	1.95
-G6	3.5	3.8	3.7
-EOF
-cat > "$outdir/vst_annotated.tsv" <<'EOF'
-gene_id	gene_symbol	gene_biotype	RUN1	RUN2	RUN3
-G1	Gene1	protein_coding	2.1	2.4	2.2
-G2	Gene2	protein_coding	3.1	2.9	3.0
-G3	Gene3	protein_coding	1.5	1.7	1.6
-G4	Gene4	protein_coding	0.4	0.5	0.45
-G5	Gene5	protein_coding	1.9	2.0	1.95
-G6	Gene6	protein_coding	3.5	3.8	3.7
-EOF
-printf 'placeholder' > "$outdir/vst.rds"
-cat > "$outdir/size_factors.tsv" <<'EOF'
-run_accession	size_factor
-RUN1	1.0
-RUN2	1.0
-RUN3	1.0
-EOF
-if [[ -n "${manifest}" ]]; then
-  mkdir -p "$(dirname "$manifest")"
-  cat > "$manifest" <<'EOF'
-{"schema_version":1,"stage":"deseq2"}
-EOF
-fi
-"#;
-    let path = bin_dir.join("Rscript");
-    fs::write(&path, script).expect("failed to write mock Rscript");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&path)
-            .expect("failed to stat mock Rscript")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).expect("failed to chmod mock Rscript");
-    }
+fn write_gzip(path: &Path, contents: &[u8]) {
+    let file = fs::File::create(path).expect("failed to create gzip fixture");
+    let mut encoder = GzEncoder::new(file, Compression::default());
+    encoder
+        .write_all(contents)
+        .expect("failed to write gzip fixture");
+    encoder.finish().expect("failed to finish gzip fixture");
 }
 
 fn write_minimal_inputs(root: &Path) -> (PathBuf, PathBuf) {
     let cdna = root.join("test.cdna.fa.gz");
     let gtf = root.join("test.gtf.gz");
-    fs::write(&cdna, b">tx1\nACGTACGTACGT\n>tx2\nTTTTAACCGG\n").expect("failed to write cdna");
-    fs::write(
-        &gtf,
-        b"chr1\tsrc\tgene\t1\t100\t.\t+\t.\tgene_id \"GENE1\"; gene_name \"Gene1\"; gene_biotype \"protein_coding\";\n",
-    )
-    .expect("failed to write gtf");
+    write_gzip(
+        &cdna,
+        br#">tx1
+ACGTACGTACGT
+>tx2
+TTTTAACCGG
+"#,
+    );
+    write_gzip(&gtf, br#"chr1	src	transcript	1	100	.	+	.	gene_id "G1"; gene_name "Gene1"; gene_biotype "protein_coding"; transcript_id "tx1";
+chr1	src	transcript	101	200	.	+	.	gene_id "G2"; gene_name "Gene2"; gene_biotype "protein_coding"; transcript_id "tx2";
+"#);
     (cdna, gtf)
 }
 
 #[test]
-fn normalize_then_corr_module_gmt_workflow() {
+fn normalize_rejects_a_degenerate_fixture_with_a_rust_dispersion_error() {
     let temp = TempDir::new().expect("failed to create tempdir");
     let root = temp.path();
-    let bin_dir = root.join("mock_bin");
-    fs::create_dir_all(&bin_dir).expect("failed to create mock bin dir");
-    make_mock_rscript(&bin_dir);
-
     run_ok(
         &["init", "--root", root.to_str().expect("invalid root path")],
-        Some(&bin_dir),
+        None,
     );
 
     let paths = ProjectPaths::new(root);
@@ -194,7 +115,10 @@ fn normalize_then_corr_module_gmt_workflow() {
             instrument_platform: Some("ILLUMINA".to_string()),
             instrument_model: Some("TEST".to_string()),
             remote_files: Vec::new(),
-            metadata: std::collections::BTreeMap::new(),
+            metadata: std::collections::BTreeMap::from([(
+                "condition".to_string(),
+                if run == "RUN2" { "B" } else { "A" }.to_string(),
+            )]),
             state: RunState::QuantDone,
             last_error: None,
             updated_at: now_rfc3339(),
@@ -202,10 +126,19 @@ fn normalize_then_corr_module_gmt_workflow() {
         .collect::<Vec<_>>();
     db.upsert_runs(&runs).expect("failed to insert runs");
     for run in ["RUN1", "RUN2", "RUN3"] {
-        let quant_dir = paths.quant_run_dir(run, "r-kallisto");
+        let quant_dir = paths.quant_run_dir(run, "kallistors");
         fs::create_dir_all(&quant_dir).expect("failed to create quant dir");
         let abundance_h5 = quant_dir.join("abundance.h5");
         let run_info_json = quant_dir.join("run_info.json");
+        fs::write(
+            quant_dir.join("abundance.tsv"),
+            format!(
+                "target_id\tlength\teff_length\test_counts\ttpm\ntx1\t12\t10\t{}\t400000\ntx2\t10\t8\t{}\t600000\n",
+                if run == "RUN1" { 100 } else { 120 },
+                if run == "RUN2" { 200 } else { 180 },
+            ),
+        )
+        .expect("failed to write abundance.tsv");
         fs::write(&abundance_h5, b"h5").expect("failed to write abundance.h5");
         fs::write(&run_info_json, b"{\"run\":\"ok\"}").expect("failed to write run_info.json");
         db.record_artifact(&ArtifactRecord {
@@ -236,6 +169,19 @@ fn normalize_then_corr_module_gmt_workflow() {
         .expect("failed to record run info artifact");
     }
 
+    let reference = rnaa_stages::refs::EnsemblReferenceManager::new()
+        .unwrap()
+        .ensure_reference(&paths, &db, &config)
+        .unwrap();
+    for run in db.list_runs().unwrap() {
+        rnaa_stages::quant::declare_external_quant(
+            &run.run_accession,
+            &paths.quant_run_dir(&run.run_accession, "kallistors"),
+            &reference,
+            "external underpowered module fixture",
+        )
+        .unwrap();
+    }
     let samplesheet = "project_id\tstudy_accession\trun_accession\tcondition\tbatch\n\
                       test\tSRPTEST\tRUN1\tA\tB1\n\
                       test\tSRPTEST\tRUN2\tB\tB1\n\
@@ -253,59 +199,17 @@ fn normalize_then_corr_module_gmt_workflow() {
         gmt_path.display()
     );
 
-    run_ok(
-        &[
+    let output = std::process::Command::new(rnaa_bin())
+        .args([
             "normalize",
             "--root",
             root.to_str().expect("invalid root path"),
             "--design",
-            "~ batch + condition",
-        ],
-        Some(&bin_dir),
-    );
-    run_ok(
-        &[
-            "corr",
-            "--root",
-            root.to_str().expect("invalid root path"),
-            "--model",
-            "~ batch + condition",
-            "--method",
-            "spearman",
-            "--module-gmt",
-            gmt_path.to_str().expect("invalid gmt path"),
-            "--module-top",
-            "3",
-            "--module-min-size",
-            "2",
-            "--fgsea-permutations",
-            "200",
-        ],
-        Some(&bin_dir),
-    );
-
-    let de_dir = paths.de_project_dir(&project.project_id);
-    assert!(de_dir.join("gene_counts.tsv").exists());
-    assert!(de_dir.join("gene_norm_counts.tsv").exists());
-    assert!(de_dir.join("vst.tsv").exists());
-    assert!(de_dir.join("gene_counts_annotated.tsv").exists());
-    assert!(de_dir.join("gene_norm_counts_annotated.tsv").exists());
-    assert!(de_dir.join("vst_annotated.tsv").exists());
-
-    let corr_dir = paths.corr_project_dir(&project.project_id);
-    assert!(corr_dir.join("modules_top_genes.tsv").exists());
-    assert!(corr_dir.join("modules_top_genes_annotated.tsv").exists());
-    assert!(corr_dir.join("module_t_values.tsv").exists());
-    assert!(corr_dir.join("module_t_values_annotated.tsv").exists());
-    assert!(corr_dir.join("module_fgsea.tsv").exists());
-
-    let module_content = fs::read_to_string(corr_dir.join("modules_top_genes.tsv"))
-        .expect("failed to read modules output");
-    assert!(module_content.lines().count() >= 2);
-    let tvals_content = fs::read_to_string(corr_dir.join("module_t_values.tsv"))
-        .expect("failed to read t-values output");
-    assert!(tvals_content.lines().count() >= 2);
-    let fgsea_content =
-        fs::read_to_string(corr_dir.join("module_fgsea.tsv")).expect("failed to read fgsea output");
-    assert!(fgsea_content.starts_with("module_id\tmodule_size\tpathway\t"));
+            "~ condition",
+        ])
+        .output()
+        .expect("failed to run Rust normalization");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("rsdeseq2 failed to fit"));
+    assert!(gmt_path.exists());
 }

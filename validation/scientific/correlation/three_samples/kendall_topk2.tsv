@@ -1,0 +1,7 @@
+gene_a	gene_b	r
+up	down	-1
+up	tied	0.816496580927726
+tied	up	0.816496580927726
+tied	down	-0.816496580927726
+down	up	-1
+down	tied	-0.816496580927726

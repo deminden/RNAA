@@ -8,20 +8,20 @@
 //!
 //! Note: This module requires the `native` feature (file I/O, S3, HTTP).
 
-use anyhow::{Context, Result, bail};
-use flate2::Compression;
-use flate2::read::GzDecoder;
+use anyhow::{bail, Context, Result};
+use flate2::read::MultiGzDecoder as GzDecoder;
 use flate2::write::GzEncoder;
-use gzp::ZWriter;
+use flate2::Compression;
 use gzp::deflate::Gzip;
 use gzp::par::compress::{ParCompress, ParCompressBuilder};
+use gzp::ZWriter;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::Client as S3Client;
 use tokio::runtime::Runtime;
 
 /// Check if a path is a URL
@@ -380,7 +380,7 @@ fn download_url(url: &str) -> Result<PathBuf> {
     let mut file =
         File::create(&temp_path).context(format!("Failed to create temp file: {temp_path:?}"))?;
 
-    let mut reader = response.into_reader();
+    let mut reader = response.into_body().into_reader();
     let mut buffer = vec![0u8; 8 * 1024 * 1024]; // 8MB buffer
     let mut total_bytes = 0usize;
 
@@ -507,7 +507,7 @@ pub(crate) fn open_input(path: &str) -> Result<Box<dyn BufRead + Send>> {
 pub enum OutputWriter {
     Plain(BufWriter<File>),
     Gzip(BufWriter<GzEncoder<File>>),
-    ParGzip(ParCompress<Gzip>),
+    ParGzip(ParCompress<'static, Gzip, File>),
     Stdout(BufWriter<std::io::Stdout>),
     S3Plain(S3Writer),
     S3Gzip(BufWriter<GzEncoder<S3Writer>>),
@@ -638,5 +638,55 @@ pub(crate) fn open_output(
                 Ok(OutputWriter::Plain(writer))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod dependency_tests {
+    use super::*;
+
+    #[test]
+    fn parallel_gzip_roundtrip() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let output = temporary.path().join("reads.fastq.gz");
+        let input = b"@read\nACGTACGT\n+\nIIIIIIII\n".repeat(100_000);
+        let mut writer = open_output(output.to_str().unwrap(), Some(6), true)?;
+        writer.write_all(&input)?;
+        writer.finish()?;
+        let mut decoded = Vec::new();
+        open_input(output.to_str().unwrap())?.read_to_end(&mut decoded)?;
+        assert_eq!(decoded, input);
+        Ok(())
+    }
+
+    #[test]
+    fn http_response_body_roundtrip() -> Result<()> {
+        use std::net::TcpListener;
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let name = format!(
+            "rnaa-{}-{}.fastq",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        );
+        let expected = b"@read\nACGT\n+\nIIII\n";
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+            let mut request = [0_u8; 4096];
+            stream.read(&mut request)?;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                expected.len()
+            )?;
+            stream.write_all(expected)
+        });
+        let downloaded = download_url(&format!("http://{address}/{name}"))?;
+        assert_eq!(std::fs::read(&downloaded)?, expected);
+        std::fs::remove_file(downloaded)?;
+        server.join().expect("HTTP test server panicked")?;
+        Ok(())
     }
 }

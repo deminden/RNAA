@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "oracle": "independent R package execution",
+  "versions": {
+    "R": "4.6.2",
+    "WGCNA": "1.74",
+    "fgsea": "1.38.0"
+  },
+  "generator": {
+    "path": "generate_modules.R",
+    "sha256": "1446c337190763bf185c3b72a61d1acc445f8510b7153114d88635da660ed234"
+  },
+  "sources": {
+    "R": {
+      "version": "4.6.2",
+      "url": "https://cran.r-project.org/bin/macosx/sonoma-arm64/base/R-4.6.2-arm64.pkg",
+      "sha256": "a678b4db1fcd71b1b1cc58edcfa4a8d36ee012a02659dde9eab9366e93571157"
+    },
+    "WGCNA": {
+      "version": "1.74",
+      "url": "https://cran.r-project.org/src/contrib/WGCNA_1.74.tar.gz",
+      "sha256": "4f61e117b82287f01b61bf936d5c5ea3814c9c4b0d0b90d5016dda77f1f955d6"
+    },
+    "fgsea": {
+      "version": "1.38.0",
+      "url": "https://bioconductor.posit.co/packages/3.23/bioc/src/contrib/fgsea_1.38.0.tar.gz",
+      "sha256": "223eede5c1c1c8f8a5979e51a40d7f373f0476aefc5c3525c323af5cf871798f"
+    }
+  },
+  "files": {
+    "sessionInfo.txt": {
+      "sha256": "871183488c93afa95711c921a596467302d8feb8953745a6303436d3a049ea36"
+    },
+    "three_samples/diagnostics.tsv": {
+      "sha256": "120af9dc659cf2eab7c1de52704e7eeeab6e81010e6f85ecc6cefb4703e81631"
+    },
+    "three_samples/input.tsv": {
+      "sha256": "5b937036ad7c2b791027fb076510bbac24be7ca2b5699476bb4afcd71e8806a6"
+    },
+    "three_samples/scores.tsv": {
+      "sha256": "d4d2414cf8ab13287f42de0f9a37133906327c89af1fa2d8e5e2352b4986cbe4"
+    },
+    "three_samples/wgcna.tsv": {
+      "sha256": "6f214ab136ba89c92a88d019f16921e19e612768a35cf855d48ce3b6dec42e8b"
+    },
+    "tied_leading/diagnostics.tsv": {
+      "sha256": "2119bd06f6c451f975d3ce0aae9fa30f9c8eb8e5cde287b169e2acdd4edcb269"
+    },
+    "tied_leading/input.tsv": {
+      "sha256": "e0582812581c474adaef27011573748a473b8a7cf0111e6755af99ddd15441b6"
+    },
+    "tied_leading/scores.tsv": {
+      "sha256": "a08e275a2a2b75e73b8b5a0cbc09aff318ef23b15a2bf769bb67757fc662c929"
+    },
+    "unequal_scales/diagnostics.tsv": {
+      "sha256": "63e3c0a6de6671a441180930029efbdfbb4cdae232a7ab007e33b15287a962a9"
+    },
+    "unequal_scales/input.tsv": {
+      "sha256": "fa884ee5421ca4602919a1dd6e20ae50d47c2393839d54aa5e466e3af87c3425"
+    },
+    "unequal_scales/scores.tsv": {
+      "sha256": "1856844cf283bf1cf4bb09e46c10e0b58a9c10859b03651cc512a88be352ed14"
+    },
+    "unequal_scales/wgcna.tsv": {
+      "sha256": "e4a571aae41f9f414d1e7045c8985b1053690da2d2c508e0889e0edec31d51e8"
+    },
+    "versions.tsv": {
+      "sha256": "d02377cf9c3d619a1047db357936a8336a8e3f695f56082c89c495ece0a3761f"
+    },
+    "workflow/enrichment.tsv": {
+      "sha256": "93095470be4413f273bc3fcfb660e6e748f6ef2b2123837a4afb40640de55aec"
+    },
+    "workflow/input.tsv": {
+      "sha256": "fcb59b5ec63df8d196b8f97065fa28820f650f0ff21d9f3145eb0b09b4056de1"
+    },
+    "workflow/membership.tsv": {
+      "sha256": "b740116647ced8acf0805da1e5e3a71b8050314f416ff08ea8c76df98d733741"
+    },
+    "workflow/pathways.gmt": {
+      "sha256": "0e5fadb7ea6df730a96a7194fe0b102bbaee91f45b56f396cd50ffa748fdc0c6"
+    },
+    "workflow/rankings.tsv": {
+      "sha256": "1026b7c312a3de4e76a11c0276716a8bef79311a5ab4e56eae77c35460267f24"
+    },
+    "workflow/scores.tsv": {
+      "sha256": "5bf355fcb61081e24f1e3a46be709acb908bd158b18ee17d81031e45967b46cc"
+    },
+    "zero_average/diagnostics.tsv": {
+      "sha256": "fb75eecc8794fbc46526f6bdb36c648696ec1ae3b41530ebb932956a22fb97b1"
+    },
+    "zero_average/input.tsv": {
+      "sha256": "285339ba4037987792633bc48355c621dfd3be66060965c7b9b1b6c6eef8eeac"
+    },
+    "zero_average/scores.tsv": {
+      "sha256": "13513fb606c5639e33af44c426c401d5ffe31013289379c76e32ae0b27335a5a"
+    }
+  },
+  "tolerances": {
+    "continuous": {
+      "absolute": 1e-09,
+      "relative": 1e-09
+    },
+    "wald_iterative": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "rounded_counts": "exact",
+    "undefined": "matching missingness"
+  }
+}

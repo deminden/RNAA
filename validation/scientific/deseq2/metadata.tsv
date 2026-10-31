@@ -1,0 +1,25 @@
+key	value
+DESeq2_version	1.52.0
+Bioconductor_version	3.23
+R_version	4.6.1
+platform	x86_64-conda-linux-gnu
+reference_fixture	tiny_two_group_four_gene
+fixed_glm_reference_mode	DESeq2:::fitNbinomGLMs with supplied dispersions, default 1e-6 beta ridge, useQR=FALSE, useOptim=FALSE
+beta_prior_reference_mode	DESeq2:::estimateBetaPriorVar from supplied-dispersion MLE betas with weighted and quantile methods
+normalization_factors_reference_mode	counts(dds, normalized=TRUE) with normalizationFactors(dds), which preempt sizeFactors(dds)
+native_nf_dispersion_reference_mode	DESeq2 roughDispEstimate, momentsDispEstimate, and estimateDispersionsGeneEst stored mu with normalizationFactors(dds)
+fixed_glm_force_optim_reference_mode	DESeq2:::fitNbinomGLMs with supplied dispersions, default 1e-6 beta ridge, useQR=FALSE, useOptim=TRUE, forceOptim=TRUE
+weighted_reference_mode	getBaseMeansAndVariances with raw weights, getAndCheckWeights row-normalized weights, and fitNbinomGLMs with supplied dispersions
+native_glm_mu_cr_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=TRUE) without observation weights for Cox-Reid gene-wise dispersion references
+native_weighted_glm_mu_cr_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=TRUE) with observation weights for weighted Cox-Reid gene-wise dispersion references
+native_weighted_glm_mu_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=FALSE), estimateDispersionsFit(fitType='mean'), estimateDispersionsMAP(useCR=FALSE), and full/reduced fitNbinomGLMs(useQR=FALSE,useOptim=FALSE) with observation weights
+native_weighted_glm_mu_mean_cr_map_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=TRUE), estimateDispersionsFit(fitType='mean'), and estimateDispersionsMAP(useCR=TRUE) with observation weights
+native_glm_mu_mean_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=FALSE), estimateDispersionsFit(fitType='mean'), and estimateDispersionsMAP(useCR=FALSE) without observation weights
+native_glm_mu_mean_cr_map_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=TRUE), estimateDispersionsFit(fitType='mean'), and estimateDispersionsMAP(useCR=TRUE) without observation weights
+native_glm_mu_local_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=FALSE), estimateDispersionsFit(fitType='local'), estimateDispersionsMAP(useCR=FALSE), and full/reduced fitNbinomGLMs(useQR=FALSE,useOptim=FALSE) without observation weights
+native_glm_mu_local_cr_map_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=TRUE), estimateDispersionsFit(fitType='local'), and estimateDispersionsMAP(useCR=TRUE) without observation weights
+native_weighted_glm_mu_local_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=FALSE), estimateDispersionsFit(fitType='local'), estimateDispersionsMAP(useCR=FALSE), and full/reduced fitNbinomGLMs(useQR=FALSE,useOptim=FALSE) with observation weights
+native_weighted_glm_mu_local_cr_map_reference_mode	estimateDispersionsGeneEst(linearMu=FALSE,niter=2,useCR=TRUE), estimateDispersionsFit(fitType='local'), and estimateDispersionsMAP(useCR=TRUE) with observation weights
+dispersion_trend_reference_mode	parametricDispersionFit, estimateDispersionsFit(fitType='mean'), and localDispersionFit fixtures including prediction and threshold edge cases
+dispersion_prior_reference_mode	estimateDispersionsPriorVar high-df and low-df fixtures; low-df uses DESeq2's seeded Monte Carlo/R loess branch
+map_dispersion_reference_mode	DESeq2:::fitDisp MAP dispersion fixture with explicit prior and Cox-Reid settings

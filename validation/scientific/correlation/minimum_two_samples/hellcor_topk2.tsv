@@ -1,0 +1,7 @@
+gene_a	gene_b	r
+up	down	0
+up	other	0
+down	up	0
+down	other	0
+other	up	0
+other	down	0

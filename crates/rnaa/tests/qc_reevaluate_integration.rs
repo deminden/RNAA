@@ -79,7 +79,7 @@ fn qc_reevaluate_invalidates_downstream_when_gate_outcome_changes() {
         instrument_model: Some("TEST".to_string()),
         remote_files: Vec::new(),
         metadata: BTreeMap::new(),
-        state: RunState::CorrDone,
+        state: RunState::QuantDone,
         last_error: None,
         updated_at: now_rfc3339(),
     };
@@ -88,7 +88,7 @@ fn qc_reevaluate_invalidates_downstream_when_gate_outcome_changes() {
     let report_dir = root
         .join("quant")
         .join("RUN1")
-        .join("r-kallisto")
+        .join("kallistors")
         .join("fasterp");
     fs::create_dir_all(&report_dir).expect("failed to create report dir");
     let report_path = report_dir.join("fasterp.json");
@@ -130,7 +130,7 @@ fn qc_reevaluate_invalidates_downstream_when_gate_outcome_changes() {
         &trimmed_fastq,
     );
 
-    let quant_dir = root.join("quant").join("RUN1").join("r-kallisto");
+    let quant_dir = root.join("quant").join("RUN1").join("kallistors");
     fs::create_dir_all(&quant_dir).expect("failed to create quant dir");
     let run_info = quant_dir.join("run_info.json");
     fs::write(&run_info, br#"{"run":"RUN1"}"#).expect("failed to write run info");
@@ -173,6 +173,7 @@ fn qc_reevaluate_invalidates_downstream_when_gate_outcome_changes() {
         .expect("failed to seed corr stage");
 
     let mut config = ProjectConfig::load(&root.join("rnaa.toml")).expect("failed to load config");
+    config.quant.preprocess = true;
     config.quant.qc_gate.min_pass_rate = Some(0.80);
     config
         .save(&root.join("rnaa.toml"))
@@ -196,11 +197,11 @@ fn qc_reevaluate_invalidates_downstream_when_gate_outcome_changes() {
         .into_iter()
         .find(|item| item.run_accession == "RUN1")
         .expect("missing RUN1");
-    assert_eq!(run.state, RunState::PreprocessFailed);
-    assert!(
-        run.last_error
-            .as_deref()
-            .is_some_and(|reason| reason.contains("pass_rate"))
+    assert_eq!(run.state, RunState::QuantDone);
+    assert!(run.last_error.is_none());
+    assert_eq!(
+        db.eligibility("RUN1").unwrap().unwrap().descriptor.state,
+        rnaa_core::eligibility::EligibilityState::Rejected
     );
 
     let qc = db
@@ -227,4 +228,18 @@ fn qc_reevaluate_invalidates_downstream_when_gate_outcome_changes() {
     ]);
     let status_stdout = String::from_utf8_lossy(&status_output.stdout);
     assert!(status_stdout.contains("runs_skipped_qc\t1"));
+    let previous = db.get_preprocess_qc("RUN1").unwrap().unwrap();
+    fs::write(
+        &report_path,
+        r#"{"mode":"single","passed_reads":100,"failed_reads":0}"#,
+    )
+    .unwrap();
+    let corrupt = run_cmd(&["qc", "reevaluate", "--root", root.to_str().unwrap()]);
+    assert!(
+        !corrupt.status.success(),
+        "legacy reports also require their registered digest"
+    );
+    let current = db.get_preprocess_qc("RUN1").unwrap().unwrap();
+    assert_eq!(current.updated_at, previous.updated_at);
+    assert!(!current.gate_passed);
 }

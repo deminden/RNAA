@@ -1,0 +1,32 @@
+{
+  "R": {
+    "version": "4.6.2",
+    "url": "https://cran.r-project.org/bin/macosx/sonoma-arm64/base/R-4.6.2-arm64.pkg",
+    "sha256": "a678b4db1fcd71b1b1cc58edcfa4a8d36ee012a02659dde9eab9366e93571157"
+  },
+  "tximport": {
+    "version": "1.40.0",
+    "url": "https://bioconductor.posit.co/packages/3.23/bioc/src/contrib/tximport_1.40.0.tar.gz",
+    "sha256": "72841a6b2ac1f64ccb05af2d9fba4eea781596771798cefcb3a9327f9dc929f9"
+  },
+  "DESeq2": {
+    "version": "1.52.0",
+    "url": "https://bioconductor.posit.co/packages/3.23/bioc/src/contrib/DESeq2_1.52.0.tar.gz",
+    "sha256": "8c91699286336350e66eec132ce6fdf5bb4af78e2a4d015a5a61224f62a95984"
+  },
+  "WGCNA": {
+    "version": "1.74",
+    "url": "https://cran.r-project.org/src/contrib/WGCNA_1.74.tar.gz",
+    "sha256": "4f61e117b82287f01b61bf936d5c5ea3814c9c4b0d0b90d5016dda77f1f955d6"
+  },
+  "HellCor": {
+    "version": "1.3",
+    "url": "https://cran.r-project.org/src/contrib/HellCor_1.3.tar.gz",
+    "sha256": "eadb59ab28e161a866b26d08018fd159ccdc816674909608d287ef536f14ecaf"
+  },
+  "fgsea": {
+    "version": "1.38.0",
+    "url": "https://bioconductor.posit.co/packages/3.23/bioc/src/contrib/fgsea_1.38.0.tar.gz",
+    "sha256": "223eede5c1c1c8f8a5979e51a40d7f373f0476aefc5c3525c323af5cf871798f"
+  }
+}

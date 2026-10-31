@@ -1,0 +1,9 @@
+gene_a	gene_b	r
+up	inverse	-1
+up	almost_up	0.999999999999306
+almost_up	up	0.999999999999306
+almost_up	inverse	-0.999999999999306
+inverse	up	-1
+inverse	almost_up	-0.999999999999306
+irregular	up	0.880952380952381
+irregular	inverse	-0.880952380952381

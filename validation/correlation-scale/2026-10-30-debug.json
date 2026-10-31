@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-30T09:44:13.070113+00:00",
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "architecture": "arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1\n",
+  "measurement": "separate process per size; RSS includes startup and input generation",
+  "scope": "deterministic synthetic top-k probe; not a production cohort or supported-host release qualification",
+  "source_sha256": {
+    "Cargo.lock": "013566b336b181ed9e86ebc6aba101a7fb061e27733cabe2c93ab6f71bd8fadd",
+    "crates/rnaa-core/src/config.rs": "5ceffcf9eff33910c0c80ac3c983d9e34f0414129cdbdfa83e61894fc167a2a6",
+    "crates/rnaa-stages/examples/correlation_scale.rs": "81e0de3b475a2c5c75348a718de4faba679ed5adb0eb167dbb4f31e78155b5e7",
+    "crates/rnaa-stages/src/corr/enrichment.rs": "3a92391ec39549a887984be3703c8a20c6af433f7c5a08628babbcf77c11654d",
+    "crates/rnaa-stages/src/corr/limits.rs": "54485c47a1172485df7addf8249d9f3a39cf8a17c7d5ab4b429778ad160f7a7b",
+    "crates/rnaa-stages/src/corr/mod.rs": "9539358334fe44dfbbc6e0360ae590ab279aa781eab98205be8adc53b07813c3",
+    "crates/rnaa-stages/src/corr/network.rs": "8db988d409b8604e2474c780a32476ef0d47e6c12feedb578852b05f09c0a761",
+    "crates/rnaa-stages/src/corr/prepared.rs": "cabb085975490c0b039e5f84ad4a76b18d9fc2c9811dceba685e7f2c9ccdd34e",
+    "crates/rnaa-stages/src/corr/residualize.rs": "916491253ca1f6ba532b3c628c1e6a6634113b865cfeb4744f80237e0bd2eb73",
+    "crates/rnaa-stages/src/corr/stream.rs": "5395c7e3bc8a2b01baab28f3c096a3324bda73de6f59f7b81ed4cc7403bc8a10"
+  },
+  "runs": [
+    {
+      "block_rows": 64,
+      "correlation_wall_seconds": 1.498247833,
+      "genes": 2000,
+      "input_bytes": 212630,
+      "k": 10,
+      "method": "pearson",
+      "output_bytes": 868005,
+      "profile": "debug",
+      "resource_estimate": {
+        "genes": 2000,
+        "output_bytes": 7701024,
+        "samples": 16,
+        "working_bytes": 1715015
+      },
+      "samples": 16,
+      "statistics": {
+        "evaluated_entries": 4000000,
+        "peak_block_entries": 4096,
+        "peak_retained_edges": 640,
+        "peak_stripe_entries": 0,
+        "undefined_entries": 0
+      },
+      "threads": 2,
+      "process_max_rss_bytes": 9125888,
+      "time_stderr": "        1.76 real         2.57 user         0.01 sys\n             9125888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 757  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                1273  involuntary context switches\n         36618745385  instructions retired\n         11218662839  cycles elapsed\n             3326432  peak memory footprint\n",
+      "hypothetical_single_dense_f64_bytes": 32000000
+    },
+    {
+      "block_rows": 64,
+      "correlation_wall_seconds": 5.657966167,
+      "genes": 4000,
+      "input_bytes": 425084,
+      "k": 10,
+      "method": "pearson",
+      "output_bytes": 1735543,
+      "profile": "debug",
+      "resource_estimate": {
+        "genes": 4000,
+        "output_bytes": 15401024,
+        "samples": 16,
+        "working_bytes": 3317015
+      },
+      "samples": 16,
+      "statistics": {
+        "evaluated_entries": 16000000,
+        "peak_block_entries": 4096,
+        "peak_retained_edges": 640,
+        "peak_stripe_entries": 0,
+        "undefined_entries": 0
+      },
+      "threads": 2,
+      "process_max_rss_bytes": 9846784,
+      "time_stderr": "        5.66 real         9.98 user         0.03 sys\n             9846784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 801  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                5089  involuntary context switches\n        145035471862  instructions retired\n         43575796416  cycles elapsed\n             4030920  peak memory footprint\n",
+      "hypothetical_single_dense_f64_bytes": 128000000
+    }
+  ]
+}

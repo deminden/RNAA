@@ -1,0 +1,38 @@
+{
+  "scope": "one macOS ARM64 selection-only process per implementation; debug profile",
+  "rustc": "1.99.0 (b940084d7 2026-09-28)",
+  "input": {
+    "genes": 50000,
+    "samples": 500,
+    "bytes": 50341288,
+    "sha256": "776987d2ababc1c0b34606d5c82f84fc092a72a8bf3d1cb1bef7549b529e9ece",
+    "generator": "Header gene_id followed by S0 through S499, then G0 through G49999 each followed by 250 repetitions of tab-separated 0 and 1; all records end in newline."
+  },
+  "selection": "topvar:1000, all equal variances",
+  "baseline": {
+    "description": "previous full-matrix parse, stable full variance sort and selected-row clone, reproduced in the probe",
+    "max_rss_bytes": 222838784,
+    "wall_seconds": 2.72
+  },
+  "stream": {
+    "description": "current materialize_geneset_matrix included directly in the probe",
+    "max_rss_bytes": 10256384,
+    "wall_seconds": 2.5
+  },
+  "output_sha256_both": "c4a0084f963cc571f99d5eee1fd053a62e3ce9f421db9e5e382b72c3260ad1f4",
+  "evidence_sha256": {
+    "crates/rnaa/src/analysis/geneset.rs": "54a52960fa75d13de24441cd1ba51cbb0e9f362839aa73ec548f8ed84c615b64",
+    "validation/correlation-scale/2026-10-31-selection-probe.rs": "65c8065920235d4e0d3082ae7238f4628d8371116401bfc9d83c2ef6eb3429af",
+    "validation/correlation-scale/2026-10-31-selection-Cargo.toml.txt": "2b5a6ea9d69a6fafb1c59162c4b6fd8a1f2b6f17c616953dc7ce2c415ac43bed",
+    "validation/correlation-scale/2026-10-31-selection-Cargo.lock.txt": "c23d2f262bff4b71fe4b967174ea73ec5702d2490b304c8aa6e9c432cb6c3ef9",
+    "validation/correlation-scale/2026-10-31-selection-baseline.time.txt": "2770c5803c55a7524c915461ffbb1056ceb161d725de9b8ab9573542e39c0cd2",
+    "validation/correlation-scale/2026-10-31-selection-stream.time.txt": "e7690ecbbd21bc5413f34f109c2e735e050d536d22f109e0f0a6406f976b3320"
+  },
+  "limitations": [
+    "Single unoptimized local observation; execution order was baseline then stream, with no cold-cache control.",
+    "The temporary standalone probe has its own resolved dependencies, recorded in the copied Cargo lock; it is not a packaged RNAA executable.",
+    "Matrix generation, downstream adjustment, correlation, Linux and production throughput are excluded.",
+    "All genes have equal variance; the test suite separately exercises differing variances, stable ties, numeric values, input validation and cancellation.",
+    "The source and manifest contain absolute workspace paths that must be changed to reproduce elsewhere."
+  ]
+}

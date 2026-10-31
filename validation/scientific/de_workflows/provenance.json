@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "oracle": "independent R package execution",
+  "versions": {
+    "R": "4.6.2",
+    "DESeq2": "1.52.0"
+  },
+  "generator": {
+    "path": "generate_de.R",
+    "sha256": "f1e0e7766b923dd7bb2bb4c666ee1d5985d973585e7914b440e1944b45788544",
+    "inputs": {
+      "fixtures/native_workflow_counts.tsv": {
+        "sha256": "e2e2141b8dfcea9c53033e958e5a1897ff8067ed8ddc8ccb5e858ccf26c6c2b6"
+      }
+    }
+  },
+  "sources": {
+    "R": {
+      "version": "4.6.2",
+      "url": "https://cran.r-project.org/bin/macosx/sonoma-arm64/base/R-4.6.2-arm64.pkg",
+      "sha256": "a678b4db1fcd71b1b1cc58edcfa4a8d36ee012a02659dde9eab9366e93571157"
+    },
+    "DESeq2": {
+      "version": "1.52.0",
+      "url": "https://bioconductor.posit.co/packages/3.23/bioc/src/contrib/DESeq2_1.52.0.tar.gz",
+      "sha256": "8c91699286336350e66eec132ce6fdf5bb4af78e2a4d015a5a61224f62a95984"
+    }
+  },
+  "files": {
+    "categorical/A_vs_B.tsv": {
+      "sha256": "34fc6f2f0458ba258ed3fed40d3e3d6b01340210a66a48cfccf910c9d10e1459"
+    },
+    "categorical/B_vs_A.tsv": {
+      "sha256": "1f690b30cbe4bc923de77ddf9ba887484aa174c5edd3f70ddf34375ef470c802"
+    },
+    "categorical/counts.tsv": {
+      "sha256": "2d88dfd9582f8aaf5fe5b7a62b24631632082c058a754394bf6282f9f6b6bb80"
+    },
+    "categorical/fit.tsv": {
+      "sha256": "7da6df51b0a8cd39418c9145a2fd6a6063b6913bd936adcea5b81b8323a46765"
+    },
+    "categorical/metadata.tsv": {
+      "sha256": "6ea171b7cf943083036297117adb7d3ff074509bf3ed0b8316dd9c65b5919329"
+    },
+    "categorical/normalized_counts.tsv": {
+      "sha256": "389752bd93b69adcb86691f9474fc7e1a7bc0a4359ccba272a896d02d8c66c8c"
+    },
+    "categorical/size_factors.tsv": {
+      "sha256": "9c70df5ee106c731dba597d19abda1e542059b756fc696360b387ad238fe3d0e"
+    },
+    "categorical/vst.tsv": {
+      "sha256": "03e8740347653990a06bffee32bedcea840261f44e69de6a3c00dbecd1bad987"
+    },
+    "factor_interaction/A_vs_B.tsv": {
+      "sha256": "688489e9fea52b815fa770d91e524faa6ba57191a04b52bbb2b2d2de6dac86f2"
+    },
+    "factor_interaction/B_vs_A.tsv": {
+      "sha256": "14254a17d28c5c08da6fa6c73524f6c9665706e03916c4bd73c67c01de1a4c72"
+    },
+    "factor_interaction/counts.tsv": {
+      "sha256": "2d88dfd9582f8aaf5fe5b7a62b24631632082c058a754394bf6282f9f6b6bb80"
+    },
+    "factor_interaction/fit.tsv": {
+      "sha256": "7fe3ad775863184094b5fcb0376edcbac530f2d04bf3a108f2bc389bb6f668b6"
+    },
+    "factor_interaction/metadata.tsv": {
+      "sha256": "6ea171b7cf943083036297117adb7d3ff074509bf3ed0b8316dd9c65b5919329"
+    },
+    "factor_interaction/normalized_counts.tsv": {
+      "sha256": "389752bd93b69adcb86691f9474fc7e1a7bc0a4359ccba272a896d02d8c66c8c"
+    },
+    "factor_interaction/size_factors.tsv": {
+      "sha256": "9c70df5ee106c731dba597d19abda1e542059b756fc696360b387ad238fe3d0e"
+    },
+    "factor_interaction/vst.tsv": {
+      "sha256": "8b479ddd5e8fac02f5cd773b6665845769f1671c5ff058a507767a31823bfc07"
+    },
+    "numeric/A_vs_B.tsv": {
+      "sha256": "4ccf76564d9da4a2dfc9cb07d1b795dd88884f5469721b81e22f4b2f100e6094"
+    },
+    "numeric/B_vs_A.tsv": {
+      "sha256": "dd168e2df6eba07035af40f24c5179a65e58d7ecc7aff117f9abe946316af0af"
+    },
+    "numeric/counts.tsv": {
+      "sha256": "2d88dfd9582f8aaf5fe5b7a62b24631632082c058a754394bf6282f9f6b6bb80"
+    },
+    "numeric/fit.tsv": {
+      "sha256": "b98ca785863b474e6782485db198f0b38fbf4186fa36cbe088673c7c2f4a8d14"
+    },
+    "numeric/metadata.tsv": {
+      "sha256": "6ea171b7cf943083036297117adb7d3ff074509bf3ed0b8316dd9c65b5919329"
+    },
+    "numeric/normalized_counts.tsv": {
+      "sha256": "389752bd93b69adcb86691f9474fc7e1a7bc0a4359ccba272a896d02d8c66c8c"
+    },
+    "numeric/size_factors.tsv": {
+      "sha256": "9c70df5ee106c731dba597d19abda1e542059b756fc696360b387ad238fe3d0e"
+    },
+    "numeric/vst.tsv": {
+      "sha256": "bdd0e0a1ad8b4cafdb84e9d7716f8745879a64467dd877c6025e0c956471607d"
+    },
+    "numeric_interaction/A_vs_B.tsv": {
+      "sha256": "e2ff8910143f430083cd935b91a5429960eeae331568876f4a52448122e5f82c"
+    },
+    "numeric_interaction/B_vs_A.tsv": {
+      "sha256": "da3477033a6859adac505bd759e0b534207171da727fbf21dae8d6d3fe34375d"
+    },
+    "numeric_interaction/counts.tsv": {
+      "sha256": "2d88dfd9582f8aaf5fe5b7a62b24631632082c058a754394bf6282f9f6b6bb80"
+    },
+    "numeric_interaction/fit.tsv": {
+      "sha256": "c3e7ba92eed1c7445ee9b887c81a427346b83c92bd50e4357b5a038e4da89bc9"
+    },
+    "numeric_interaction/metadata.tsv": {
+      "sha256": "6ea171b7cf943083036297117adb7d3ff074509bf3ed0b8316dd9c65b5919329"
+    },
+    "numeric_interaction/normalized_counts.tsv": {
+      "sha256": "389752bd93b69adcb86691f9474fc7e1a7bc0a4359ccba272a896d02d8c66c8c"
+    },
+    "numeric_interaction/size_factors.tsv": {
+      "sha256": "9c70df5ee106c731dba597d19abda1e542059b756fc696360b387ad238fe3d0e"
+    },
+    "numeric_interaction/vst.tsv": {
+      "sha256": "10648d88f70f3b06fd2d48c88c218bce89d5d0c85ab24df0a5307ab4482c46d1"
+    },
+    "sessionInfo.txt": {
+      "sha256": "8e5e7e0e918b2a56ac82e75b2368f516456769f550fa2ccabfacbf72c6d5833a"
+    },
+    "three_levels/A_vs_B.tsv": {
+      "sha256": "f16ae231784d9d70eb1862b5af0fa4fa575ec02f1819a08349af938b9282a5c3"
+    },
+    "three_levels/B_vs_A.tsv": {
+      "sha256": "c3d627f9387c693245195620632414387654a8806fd1d02747459c6e3b5e6e68"
+    },
+    "three_levels/counts.tsv": {
+      "sha256": "2cf568fc1698282ef582e7962bfc2e428d007e8e5533eece3c616fe7c0548946"
+    },
+    "three_levels/fit.tsv": {
+      "sha256": "7da6df51b0a8cd39418c9145a2fd6a6063b6913bd936adcea5b81b8323a46765"
+    },
+    "three_levels/metadata.tsv": {
+      "sha256": "e14dd2118978118d0e06d7414a329f2e7804e7a786b9df06363855ad99303da7"
+    },
+    "three_levels/normalized_counts.tsv": {
+      "sha256": "b2f2552762800ca4d1495d2ee3e2301ed6c2099b250e71f9a6291b5eda0925f6"
+    },
+    "three_levels/size_factors.tsv": {
+      "sha256": "ec8526adb669bc2ffdce3665d75104002ba64880f3efbcfb88647277c1d3ab7a"
+    },
+    "three_levels/vst.tsv": {
+      "sha256": "320d7b16bc31d97e022bcdacaf1b3a63cd6c755a57f0bd782ef37ce0a9750ee7"
+    },
+    "versions.tsv": {
+      "sha256": "8e017cabd69c50cbf5506c0c73edc5067985024ed9ac300a94a5307669be8b9a"
+    }
+  },
+  "tolerances": {
+    "continuous": {
+      "absolute": 1e-09,
+      "relative": 1e-09
+    },
+    "wald_iterative": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "rounded_counts": "exact",
+    "undefined": "matching missingness"
+  }
+}

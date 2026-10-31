@@ -1,0 +1,11 @@
+gene_a	gene_b	r
+ties	inverse	-0.973958591376798
+ties	outlier	0.706411897735918
+ties	zero_mad	0.709006190974667
+ties	nonlinear	0.953483747041811
+inverse	outlier	-0.577110688183727
+inverse	zero_mad	-0.577350269189626
+inverse	nonlinear	-0.938432888342738
+outlier	zero_mad	0.999585033525254
+outlier	nonlinear	0.764943687677335
+zero_mad	nonlinear	0.76670445382228

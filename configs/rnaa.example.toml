@@ -27,6 +27,9 @@ merge_strategy = "prefer_local"
 concurrency = 2
 retries = 6
 backoff_seconds = [1, 2, 4, 8, 16, 32]
+connect_timeout_seconds = 30
+read_timeout_seconds = 30
+max_transfer_seconds = 86400
 prefer = "fastq"
 method = "reqwest"
 
@@ -35,23 +38,49 @@ organism = "human"
 ensembl = "latest"
 custom_gtf = ""
 custom_cdna = ""
+index_k = 31
+index_threads = 1
+max_source_line_mb = 1 # decoded FASTA/GTF lines; increase for long unwrapped sequences
+max_decoded_mb = 0 # 0 = no aggregate decoded FASTA + GTF cap
 
 [storage]
 shared_root = ""
 max_active_size = "" # e.g. "100GB"; pauses new downloads when project storage reaches the limit
 
+[resources]
+pool_root = "" # shared local per-user default: $HOME/.cache/rnaa/resources/v1
+cpu_threads = 0 # available host parallelism; independent of this command's worker budget
+memory_mb = 0 # 75% of detected capacity; set explicitly for other container layouts
+disk_headroom_mb = 1024
+wait_seconds = 300
+# Enforced for preprocessing scan/engine and quantification scan/index/run phases.
+# Downloads also cover resume/transfer/validation and their publication copies.
+# References cover acquisition/planning and their complete build/publication phase.
+# Analysis and publication outside downloads/references remain pending.
+
 [quant]
-engine = "r-kallisto"
+engine = "kallistors"
+# Library strandedness and single-end fragment distribution assumptions.
+strand = "unstranded" # unstranded | forward | reverse
+single_fragment_length = 200.0
+single_fragment_sd = 20.0
 worker_budget = 0 # 0 = auto (all available minus reserve), otherwise total CPU budget for preprocess+quant
 threads = 16 # max kallisto threads per run
+match_cache_mb = 64 # aggregate exact-match lookup cache across mapping threads per run, MiB
+fastq_max_line_mb = 1 # positive decoded line limit, including line terminator
+fastq_max_decoded_mb = 0 # total decoded bytes across all mates/lanes per run; 0 = unlimited
 workers = 0 # optional cap on parallel quant runs; 0 = derived from worker_budget
 preprocess = false
 fastq_retention = "both" # both | original | trimmed | none
 preprocess_threads = 16 # capped at 16 per run
 preprocess_strict = true
-preprocess_max_input_mb = 1024
+preprocess_max_input_mb = 1024 # total decoded preprocessing group, MiB; 0 = no additional cap
+# Reversible count-backed input trash: none | fastq | sra | all.
+# Enabled fastq/all trash takes precedence over permanent fastq_retention.
 cleanup = "none"
 trash_days = 7
+# Successful count boundaries; always additionally attempts after command failure.
+# Expired trash is purged only by explicit storage files gc --apply --purge-expired.
 cleanup_on = "success"
 
 [quant.qc_gate]
@@ -62,15 +91,36 @@ max_too_many_n_rate = 0.1
 max_too_short_rate = 0.4
 # max_duplication_rate = 0.9
 
+[metadata]
+minimum_replicates = 2 # biological samples per contrasted level, after grouping/QC
+missing_values = [] # blanks always fail; optionally add exact markers such as "NA"
+
+[metadata.columns.condition]
+type = "factor" # numeric-looking labels remain categories
+# levels = ["control", "treated"] # optional allowed levels and stable order
+# reference = "control" # must be present in the admitted biological cohort
+
+[metadata.columns.batch]
+type = "factor"
+
+# Custom design covariates require an explicit type:
+# [metadata.columns.age]
+# type = "numeric"
+# [metadata.columns.donor]
+# type = "factor"
+# [metadata.columns.source_url]
+# type = "ignore" # identifier and ignore columns cannot enter a model
+
 [deseq2]
 design = "~ batch + condition"
 counts_from_abundance = "lengthScaledTPM"
-
-[corr]
-threads = 0 # 0 = use full worker_budget during correlation
 transform = "vst"
 
 [corr]
+block_rows = 64 # numerical tile and output stripe size
+max_memory_mb = 1024 # conservative correlation working-payload estimate, MiB
+max_output_mb = 65536 # conservative maximum output estimate, MiB
+threads = 0 # 0 = use full worker_budget during correlation
 adjust = "residualize"
 model = "~ batch + condition"
 method = "pearson"

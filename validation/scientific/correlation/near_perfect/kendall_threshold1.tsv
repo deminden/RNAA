@@ -1,0 +1,4 @@
+gene_a	gene_b	r
+up	almost_up	1
+up	inverse	-1
+almost_up	inverse	-1

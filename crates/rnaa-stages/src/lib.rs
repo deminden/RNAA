@@ -1,9 +1,14 @@
+pub mod analysis_request;
 pub mod cleanup;
 pub mod corr;
 pub mod deseq2;
+pub mod design;
 pub mod download;
+pub mod engines;
+pub mod fastq;
+mod http_transfer;
 pub mod preprocess;
 pub mod quant;
-pub mod r_scripts;
 pub mod refs;
 pub mod resolver;
+pub mod tximport;

@@ -1,4 +1,9 @@
+use rnaa_core::traits::ReferenceManager;
 use std::fs;
+use std::io::Write;
+
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -35,84 +40,29 @@ fn run_ok(args: &[&str], extra_path: Option<&Path>) {
     );
 }
 
-fn make_mock_rscript(bin_dir: &Path) {
-    let script = r#"#!/usr/bin/env bash
-set -euo pipefail
-outdir=""
-manifest=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --outdir) outdir="$2"; shift 2;;
-    --manifest-out) manifest="$2"; shift 2;;
-    *) shift;;
-  esac
-done
-mkdir -p "$outdir"
-cat > "$outdir/gene_counts.tsv" <<'EOF'
-gene_id	RUN1	RUN2
-G1	100	120
-G2	50	60
-EOF
-cat > "$outdir/gene_counts_annotated.tsv" <<'EOF'
-gene_id	gene_symbol	gene_biotype	RUN1	RUN2
-G1	Gene1	protein_coding	100	120
-G2	Gene2	protein_coding	50	60
-EOF
-cat > "$outdir/gene_norm_counts.tsv" <<'EOF'
-gene_id	RUN1	RUN2
-G1	10	12
-G2	5	6
-EOF
-cat > "$outdir/gene_norm_counts_annotated.tsv" <<'EOF'
-gene_id	gene_symbol	gene_biotype	RUN1	RUN2
-G1	Gene1	protein_coding	10	12
-G2	Gene2	protein_coding	5	6
-EOF
-cat > "$outdir/vst.tsv" <<'EOF'
-gene_id	RUN1	RUN2
-G1	2.1	2.4
-G2	1.5	1.7
-EOF
-cat > "$outdir/vst_annotated.tsv" <<'EOF'
-gene_id	gene_symbol	gene_biotype	RUN1	RUN2
-G1	Gene1	protein_coding	2.1	2.4
-G2	Gene2	protein_coding	1.5	1.7
-EOF
-printf 'placeholder' > "$outdir/vst.rds"
-cat > "$outdir/size_factors.tsv" <<'EOF'
-run_accession	size_factor
-RUN1	1.0
-RUN2	1.0
-EOF
-if [[ -n "${manifest}" ]]; then
-  mkdir -p "$(dirname "$manifest")"
-  cat > "$manifest" <<'EOF'
-{"schema_version":1,"stage":"deseq2"}
-EOF
-fi
-"#;
-    let path = bin_dir.join("Rscript");
-    fs::write(&path, script).expect("failed to write mock Rscript");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&path)
-            .expect("failed to stat mock Rscript")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).expect("failed to chmod mock Rscript");
-    }
+fn write_gzip(path: &Path, contents: &[u8]) {
+    let file = fs::File::create(path).expect("failed to create gzip fixture");
+    let mut encoder = GzEncoder::new(file, Compression::default());
+    encoder
+        .write_all(contents)
+        .expect("failed to write gzip fixture");
+    encoder.finish().expect("failed to finish gzip fixture");
 }
 
 fn write_minimal_inputs(root: &Path) -> (PathBuf, PathBuf) {
     let cdna = root.join("test.cdna.fa.gz");
     let gtf = root.join("test.gtf.gz");
-    fs::write(&cdna, b">tx1\nACGTACGTACGT\n>tx2\nTTTTAACCGG\n").expect("failed to write cdna");
-    fs::write(
-        &gtf,
-        b"chr1\tsrc\tgene\t1\t100\t.\t+\t.\tgene_id \"GENE1\"; gene_name \"Gene1\"; gene_biotype \"protein_coding\";\n",
-    )
-    .expect("failed to write gtf");
+    write_gzip(
+        &cdna,
+        br#">tx1
+ACGTACGTACGT
+>tx2
+TTTTAACCGG
+"#,
+    );
+    write_gzip(&gtf, br#"chr1	src	transcript	1	100	.	+	.	gene_id "G1"; gene_name "Gene1"; gene_biotype "protein_coding"; transcript_id "tx1";
+chr1	src	transcript	101	200	.	+	.	gene_id "G2"; gene_name "Gene2"; gene_biotype "protein_coding"; transcript_id "tx2";
+"#);
     (cdna, gtf)
 }
 
@@ -161,7 +111,16 @@ fn setup_project(root: &Path, include_batch: bool) -> (ProjectPaths, String) {
             instrument_platform: Some("ILLUMINA".to_string()),
             instrument_model: Some("TEST".to_string()),
             remote_files: Vec::new(),
-            metadata: std::collections::BTreeMap::new(),
+            metadata: std::collections::BTreeMap::from([
+                (
+                    "condition".to_string(),
+                    if run == "RUN1" { "A" } else { "B" }.to_string(),
+                ),
+                (
+                    "batch".to_string(),
+                    if run == "RUN1" { "B1" } else { "B2" }.to_string(),
+                ),
+            ]),
             state: RunState::QuantDone,
             last_error: None,
             updated_at: now_rfc3339(),
@@ -170,10 +129,19 @@ fn setup_project(root: &Path, include_batch: bool) -> (ProjectPaths, String) {
     db.upsert_runs(&runs).expect("failed to upsert runs");
 
     for run in ["RUN1", "RUN2"] {
-        let quant_dir = paths.quant_run_dir(run, "r-kallisto");
+        let quant_dir = paths.quant_run_dir(run, "kallistors");
         fs::create_dir_all(&quant_dir).expect("failed to create quant dir");
         let abundance_h5 = quant_dir.join("abundance.h5");
         let run_info_json = quant_dir.join("run_info.json");
+        fs::write(
+            quant_dir.join("abundance.tsv"),
+            format!(
+                "target_id\tlength\teff_length\test_counts\ttpm\ntx1\t12\t10\t{}\t400000\ntx2\t10\t8\t{}\t600000\n",
+                if run == "RUN1" { 100 } else { 120 },
+                if run == "RUN1" { 50 } else { 60 },
+            ),
+        )
+        .expect("failed to write abundance.tsv");
         fs::write(&abundance_h5, b"h5").expect("failed to write abundance.h5");
         fs::write(&run_info_json, b"{\"run\":\"ok\"}").expect("failed to write run_info.json");
         db.record_artifact(&ArtifactRecord {
@@ -204,6 +172,19 @@ fn setup_project(root: &Path, include_batch: bool) -> (ProjectPaths, String) {
         .expect("failed to record run info artifact");
     }
 
+    let reference = rnaa_stages::refs::EnsemblReferenceManager::new()
+        .unwrap()
+        .ensure_reference(&paths, &db, &config)
+        .unwrap();
+    for run in db.list_runs().unwrap() {
+        rnaa_stages::quant::declare_external_quant(
+            &run.run_accession,
+            &paths.quant_run_dir(&run.run_accession, "kallistors"),
+            &reference,
+            "external underpowered statistical fixture",
+        )
+        .unwrap();
+    }
     let samplesheet = if include_batch {
         "project_id\tstudy_accession\trun_accession\tcondition\tbatch\n\
          test\tSRPTEST\tRUN1\tA\tB1\n\
@@ -222,20 +203,16 @@ fn setup_project(root: &Path, include_batch: bool) -> (ProjectPaths, String) {
 fn normalize_excludes_and_demotes_runs_with_invalid_quant_outputs() {
     let temp = TempDir::new().expect("failed to create tempdir");
     let root = temp.path();
-    let bin_dir = root.join("mock_bin");
-    fs::create_dir_all(&bin_dir).expect("failed to create mock bin dir");
-    make_mock_rscript(&bin_dir);
-
     run_ok(
         &["init", "--root", root.to_str().expect("invalid root path")],
-        Some(&bin_dir),
+        None,
     );
     let (paths, _project_id) = setup_project(root, true);
 
     fs::remove_file(
         paths
-            .quant_run_dir("RUN2", "r-kallisto")
-            .join("abundance.h5"),
+            .quant_run_dir("RUN2", "kallistors")
+            .join("abundance.tsv"),
     )
     .expect("failed to remove broken abundance");
 
@@ -247,7 +224,7 @@ fn normalize_excludes_and_demotes_runs_with_invalid_quant_outputs() {
             "--design",
             "~ batch + condition",
         ],
-        Some(&bin_dir),
+        None,
     );
     assert!(!output.status.success(), "normalize unexpectedly succeeded");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -264,25 +241,21 @@ fn normalize_excludes_and_demotes_runs_with_invalid_quant_outputs() {
         run2.last_error
             .as_deref()
             .unwrap_or_default()
-            .contains("abundance.h5 missing or empty")
+            .contains("external abundance declaration")
     );
 }
 
 #[test]
-fn normalize_writes_outputs_and_marks_runs_done() {
+fn normalize_rejects_confounded_design_before_advancing_runs() {
     let temp = TempDir::new().expect("failed to create tempdir");
     let root = temp.path();
-    let bin_dir = root.join("mock_bin");
-    fs::create_dir_all(&bin_dir).expect("failed to create mock bin dir");
-    make_mock_rscript(&bin_dir);
-
     run_ok(
         &["init", "--root", root.to_str().expect("invalid root path")],
-        Some(&bin_dir),
+        None,
     );
     let (paths, project_id) = setup_project(root, true);
 
-    run_ok(
+    let output = run_cmd(
         &[
             "normalize",
             "--root",
@@ -290,34 +263,29 @@ fn normalize_writes_outputs_and_marks_runs_done() {
             "--design",
             "~ batch + condition",
         ],
-        Some(&bin_dir),
+        None,
     );
-
-    let de_dir = paths.de_project_dir(&project_id);
-    assert!(de_dir.join("gene_counts.tsv").exists());
-    assert!(de_dir.join("gene_counts_annotated.tsv").exists());
-    assert!(de_dir.join("gene_norm_counts.tsv").exists());
-    assert!(de_dir.join("gene_norm_counts_annotated.tsv").exists());
-    assert!(de_dir.join("vst.tsv").exists());
-    assert!(de_dir.join("vst_annotated.tsv").exists());
-    assert!(de_dir.join("deseq2_manifest.json").exists());
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("rank deficient"));
 
     let db = Database::open(root).expect("failed to reopen db");
     let runs = db.list_runs().expect("failed to list runs");
-    assert!(runs.iter().all(|run| run.state == RunState::DeDone));
+    assert!(runs.iter().all(|run| run.state == RunState::QuantDone));
+    assert!(
+        !paths
+            .de_project_dir(&project_id)
+            .join("deseq2_manifest.json")
+            .exists()
+    );
 }
 
 #[test]
 fn normalize_fails_when_design_references_missing_column() {
     let temp = TempDir::new().expect("failed to create tempdir");
     let root = temp.path();
-    let bin_dir = root.join("mock_bin");
-    fs::create_dir_all(&bin_dir).expect("failed to create mock bin dir");
-    make_mock_rscript(&bin_dir);
-
     run_ok(
         &["init", "--root", root.to_str().expect("invalid root path")],
-        Some(&bin_dir),
+        None,
     );
     let _ = setup_project(root, false);
 
@@ -329,7 +297,7 @@ fn normalize_fails_when_design_references_missing_column() {
             "--design",
             "~ batch + condition",
         ],
-        Some(&bin_dir),
+        None,
     );
     assert!(!output.status.success(), "normalize unexpectedly succeeded");
     let stderr = String::from_utf8_lossy(&output.stderr);

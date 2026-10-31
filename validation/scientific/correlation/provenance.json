@@ -1,0 +1,422 @@
+{
+  "schema_version": 1,
+  "oracle": "independent R package execution",
+  "versions": {
+    "R": "4.6.2",
+    "WGCNA": "1.74",
+    "HellCor": "1.3"
+  },
+  "generator": {
+    "path": "generate_correlation.R",
+    "sha256": "547bc2564c76a494b0d28a01a6d028e07219494aefe6606d51b63b0fad692a16"
+  },
+  "sources": {
+    "R": {
+      "version": "4.6.2",
+      "url": "https://cran.r-project.org/bin/macosx/sonoma-arm64/base/R-4.6.2-arm64.pkg",
+      "sha256": "a678b4db1fcd71b1b1cc58edcfa4a8d36ee012a02659dde9eab9366e93571157"
+    },
+    "WGCNA": {
+      "version": "1.74",
+      "url": "https://cran.r-project.org/src/contrib/WGCNA_1.74.tar.gz",
+      "sha256": "4f61e117b82287f01b61bf936d5c5ea3814c9c4b0d0b90d5016dda77f1f955d6"
+    },
+    "HellCor": {
+      "version": "1.3",
+      "url": "https://cran.r-project.org/src/contrib/HellCor_1.3.tar.gz",
+      "sha256": "eadb59ab28e161a866b26d08018fd159ccdc816674909608d287ef536f14ecaf"
+    }
+  },
+  "files": {
+    "minimum_two_samples/bicor.tsv": {
+      "sha256": "119591228c1c4eebc12aa04d2230ec61acc9b1955ccfe81564160a2f5e9dafc9"
+    },
+    "minimum_two_samples/bicor_raw.tsv": {
+      "sha256": "119591228c1c4eebc12aa04d2230ec61acc9b1955ccfe81564160a2f5e9dafc9"
+    },
+    "minimum_two_samples/bicor_threshold0.75.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/bicor_threshold0.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/bicor_threshold1.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/bicor_topk2.tsv": {
+      "sha256": "968f3892aeb57409a44763e2c83e56e1f9481a4f6d44a8761178d51bf50dcb2b"
+    },
+    "minimum_two_samples/hellcor.tsv": {
+      "sha256": "650994680ffed72e438165f2bc7f0b0610742671fb4d2928f524ca4cd615213f"
+    },
+    "minimum_two_samples/hellcor_raw.tsv": {
+      "sha256": "4b51fa8dc067c95d920d58b46c6cdd2db6a84c61ca678bd15aeb9a400edd993b"
+    },
+    "minimum_two_samples/hellcor_threshold0.75.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "minimum_two_samples/hellcor_threshold0.tsv": {
+      "sha256": "32629355d0b79d4db780914dab2ae9168d5dad789705f4f1d5484568255eeecd"
+    },
+    "minimum_two_samples/hellcor_threshold1.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "minimum_two_samples/hellcor_topk2.tsv": {
+      "sha256": "668b93a5a59f86a3b9fbf24bb988da28c047daf92b429e144004ba212535d356"
+    },
+    "minimum_two_samples/input.tsv": {
+      "sha256": "39dcbc46ab73d777f5b096cd05a963dc9389082b9e6f290047f8b6fd64d64130"
+    },
+    "minimum_two_samples/kendall.tsv": {
+      "sha256": "119591228c1c4eebc12aa04d2230ec61acc9b1955ccfe81564160a2f5e9dafc9"
+    },
+    "minimum_two_samples/kendall_raw.tsv": {
+      "sha256": "20b715e89770e8060f5d09810724bbf931ea37e91bde499e14b76b87f1c46284"
+    },
+    "minimum_two_samples/kendall_threshold0.75.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/kendall_threshold0.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/kendall_threshold1.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/kendall_topk2.tsv": {
+      "sha256": "968f3892aeb57409a44763e2c83e56e1f9481a4f6d44a8761178d51bf50dcb2b"
+    },
+    "minimum_two_samples/pearson.tsv": {
+      "sha256": "119591228c1c4eebc12aa04d2230ec61acc9b1955ccfe81564160a2f5e9dafc9"
+    },
+    "minimum_two_samples/pearson_raw.tsv": {
+      "sha256": "20b715e89770e8060f5d09810724bbf931ea37e91bde499e14b76b87f1c46284"
+    },
+    "minimum_two_samples/pearson_threshold0.75.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/pearson_threshold0.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/pearson_threshold1.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/pearson_topk2.tsv": {
+      "sha256": "968f3892aeb57409a44763e2c83e56e1f9481a4f6d44a8761178d51bf50dcb2b"
+    },
+    "minimum_two_samples/spearman.tsv": {
+      "sha256": "119591228c1c4eebc12aa04d2230ec61acc9b1955ccfe81564160a2f5e9dafc9"
+    },
+    "minimum_two_samples/spearman_raw.tsv": {
+      "sha256": "20b715e89770e8060f5d09810724bbf931ea37e91bde499e14b76b87f1c46284"
+    },
+    "minimum_two_samples/spearman_threshold0.75.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/spearman_threshold0.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/spearman_threshold1.tsv": {
+      "sha256": "9991254b965e843903ce4cdcbe413404b940bb8a3c9ca22e18636d55f3441481"
+    },
+    "minimum_two_samples/spearman_topk2.tsv": {
+      "sha256": "968f3892aeb57409a44763e2c83e56e1f9481a4f6d44a8761178d51bf50dcb2b"
+    },
+    "near_perfect/bicor.tsv": {
+      "sha256": "ea1ccbf88ca9878c707fb5ebb1b94a7364bc49899f33d9eb403dbb9e5ef015b9"
+    },
+    "near_perfect/bicor_raw.tsv": {
+      "sha256": "ea1ccbf88ca9878c707fb5ebb1b94a7364bc49899f33d9eb403dbb9e5ef015b9"
+    },
+    "near_perfect/bicor_threshold0.75.tsv": {
+      "sha256": "c8de67680cdc95d823826dfdbf65f935e8bca92bf74c388826b89023fcbedee0"
+    },
+    "near_perfect/bicor_threshold0.tsv": {
+      "sha256": "c8de67680cdc95d823826dfdbf65f935e8bca92bf74c388826b89023fcbedee0"
+    },
+    "near_perfect/bicor_threshold1.tsv": {
+      "sha256": "dcfa1a7d473b0b066787fc95a40794a0c6a0e22ee8f66f8b38f1aa3c4d78fe6f"
+    },
+    "near_perfect/bicor_topk2.tsv": {
+      "sha256": "7e450bda0265f9d3b62457795ad02238e50b88b0394f2a5d51a4956b927d2f8e"
+    },
+    "near_perfect/hellcor.tsv": {
+      "sha256": "0378ab0a09c37c591b1157d30071fde91fd170852e2aac850218bc58305dcf0c"
+    },
+    "near_perfect/hellcor_raw.tsv": {
+      "sha256": "0389b9893cee10e05841797a1b663bbcd61ff2eee0d4e855101c93815eed39b4"
+    },
+    "near_perfect/hellcor_threshold0.75.tsv": {
+      "sha256": "2fe94698e9b044edd92ef9bf1a4c77ab7fd1d47d32e298269b1cf8c92dfe511f"
+    },
+    "near_perfect/hellcor_threshold0.tsv": {
+      "sha256": "2fe94698e9b044edd92ef9bf1a4c77ab7fd1d47d32e298269b1cf8c92dfe511f"
+    },
+    "near_perfect/hellcor_threshold1.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "near_perfect/hellcor_topk2.tsv": {
+      "sha256": "759c6d6b4268aa7d29f08decf21fb22116c03e9129638c255bac78cbe32e327d"
+    },
+    "near_perfect/input.tsv": {
+      "sha256": "9956dbeb5c7705542f3059b1e7d2b67d1e19c2d6b618445b7a334c53af9db985"
+    },
+    "near_perfect/kendall.tsv": {
+      "sha256": "15cb56948671fb78c3bef723f45f9a6df721e49e82f506151a4eff2974e24d9e"
+    },
+    "near_perfect/kendall_raw.tsv": {
+      "sha256": "a41917a9ab3be00133c6675a283bbb37874a32f95723655a7f766e6740641874"
+    },
+    "near_perfect/kendall_threshold0.75.tsv": {
+      "sha256": "46b356fd1622dacfad9d705fd3149e8cfcffc7cdb072cbc6a1d7afe67443988a"
+    },
+    "near_perfect/kendall_threshold0.tsv": {
+      "sha256": "6cfc9b5c172eb6e6b64f74bf224a552f4bb8fbdb1c027614b106428459653511"
+    },
+    "near_perfect/kendall_threshold1.tsv": {
+      "sha256": "46b356fd1622dacfad9d705fd3149e8cfcffc7cdb072cbc6a1d7afe67443988a"
+    },
+    "near_perfect/kendall_topk2.tsv": {
+      "sha256": "f22723da23f92808d6411be6edf821eb199271d84a65eb8d80742b82f6ed4476"
+    },
+    "near_perfect/pearson.tsv": {
+      "sha256": "bbbd09a4a1b07c4dc552e41d6860800161e358797a763d3176d550d083256315"
+    },
+    "near_perfect/pearson_raw.tsv": {
+      "sha256": "889f2b375e3caa6d25238000d5c42c77e89c5546f80dd15a30333eca570f7578"
+    },
+    "near_perfect/pearson_threshold0.75.tsv": {
+      "sha256": "70edb9132d1879571ca6e0b05560ac36d2b486d7db9adaaaab3b49683858ac4d"
+    },
+    "near_perfect/pearson_threshold0.tsv": {
+      "sha256": "70edb9132d1879571ca6e0b05560ac36d2b486d7db9adaaaab3b49683858ac4d"
+    },
+    "near_perfect/pearson_threshold1.tsv": {
+      "sha256": "dcfa1a7d473b0b066787fc95a40794a0c6a0e22ee8f66f8b38f1aa3c4d78fe6f"
+    },
+    "near_perfect/pearson_topk2.tsv": {
+      "sha256": "f9f7163a7a682cfaed35bb2c04b543f92b32c4dc6e259f2863764c435cc5d208"
+    },
+    "near_perfect/spearman.tsv": {
+      "sha256": "fd1ce1189a1c97b00a662c501e3b169209a85ba7660ec3baaa37c8d0c06ce5ed"
+    },
+    "near_perfect/spearman_raw.tsv": {
+      "sha256": "ef045e02ce933b45f11ea0d53dc30644e833b271047f299ee8e2fd625ad461ab"
+    },
+    "near_perfect/spearman_threshold0.75.tsv": {
+      "sha256": "7bb869bdad845883f055adeeef3aa649cec442b715181300cc455c15998c2b03"
+    },
+    "near_perfect/spearman_threshold0.tsv": {
+      "sha256": "7bb869bdad845883f055adeeef3aa649cec442b715181300cc455c15998c2b03"
+    },
+    "near_perfect/spearman_threshold1.tsv": {
+      "sha256": "46b356fd1622dacfad9d705fd3149e8cfcffc7cdb072cbc6a1d7afe67443988a"
+    },
+    "near_perfect/spearman_topk2.tsv": {
+      "sha256": "56ff8d933e1064b5ab25a6e0d392f978126480d67aa824730692bb5af9478f3a"
+    },
+    "sessionInfo.txt": {
+      "sha256": "f756c5c77d4f7f34bc4b30a557a1ba453ad276abc1300e01d1da42e76786b837"
+    },
+    "three_samples/bicor.tsv": {
+      "sha256": "78dcbaa39e42c8d958373093cbfb57a30f55f417868a80b3020e526818d9ff25"
+    },
+    "three_samples/bicor_raw.tsv": {
+      "sha256": "78dcbaa39e42c8d958373093cbfb57a30f55f417868a80b3020e526818d9ff25"
+    },
+    "three_samples/bicor_threshold0.75.tsv": {
+      "sha256": "11ea9329c53d5887e7ec1b29f2a3eae60042263cf712c9c9ca87efb06476ce16"
+    },
+    "three_samples/bicor_threshold0.tsv": {
+      "sha256": "11ea9329c53d5887e7ec1b29f2a3eae60042263cf712c9c9ca87efb06476ce16"
+    },
+    "three_samples/bicor_threshold1.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "three_samples/bicor_topk2.tsv": {
+      "sha256": "35f09b486cc554ddfb85a7013d05f5d87403d2129994231cde186cddc624604f"
+    },
+    "three_samples/hellcor.tsv": {
+      "sha256": "6b0b7f1bcf9781360bb2e259325326986fb5f0e1ea7f2eae226931470d772255"
+    },
+    "three_samples/hellcor_raw.tsv": {
+      "sha256": "4e39b6d0ccd9eb07db9017b96bc09af28e21e28eeb7d7a9de8416f8ff7945516"
+    },
+    "three_samples/hellcor_threshold0.75.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "three_samples/hellcor_threshold0.tsv": {
+      "sha256": "ef941a0a924f4fa45bd539c92e3e67c88e16aeecbadf186253303637508a2fb3"
+    },
+    "three_samples/hellcor_threshold1.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "three_samples/hellcor_topk2.tsv": {
+      "sha256": "545fc07762f65e2bd273224a2743cf4e27872aa960467e254f6cf19c5c51fa82"
+    },
+    "three_samples/input.tsv": {
+      "sha256": "abd47a58f77cec60697ca0a34cca6a020b644834421259269b69ce3ac85fd46f"
+    },
+    "three_samples/kendall.tsv": {
+      "sha256": "10809a6ac402991ebe0d489d8eb60497b09cc179a2b58216553d593452322091"
+    },
+    "three_samples/kendall_raw.tsv": {
+      "sha256": "e128785e9ec2493c124aea9d4a5363d8ec544d734ae7674443de444f940ea05b"
+    },
+    "three_samples/kendall_threshold0.75.tsv": {
+      "sha256": "40328fec308adf2b81cb88d803194079289c30a7b1e60f6ee210d99051f0a5fa"
+    },
+    "three_samples/kendall_threshold0.tsv": {
+      "sha256": "40328fec308adf2b81cb88d803194079289c30a7b1e60f6ee210d99051f0a5fa"
+    },
+    "three_samples/kendall_threshold1.tsv": {
+      "sha256": "b4a1a9fbb4af9e9e0e61d4652c723cf1b55e0dd221987bbc1a49275d3cd21e44"
+    },
+    "three_samples/kendall_topk2.tsv": {
+      "sha256": "61e691aea57de020903b583ee00f9e1c40702790b5873ce50686f4823f0e1e41"
+    },
+    "three_samples/pearson.tsv": {
+      "sha256": "b8fb4817a79b1c56f6df99cfb8f4c7b83f84ecfec98d3728749da36f816c50a7"
+    },
+    "three_samples/pearson_raw.tsv": {
+      "sha256": "9ecb2264df2bda3f44d01f70d86d8820b76553b1b1d2a8a59539c684a1544ad6"
+    },
+    "three_samples/pearson_threshold0.75.tsv": {
+      "sha256": "6e45224013a1ccf18bb5a0ea8d2d52315b75072f86ab4cabb31496509184e4c2"
+    },
+    "three_samples/pearson_threshold0.tsv": {
+      "sha256": "6e45224013a1ccf18bb5a0ea8d2d52315b75072f86ab4cabb31496509184e4c2"
+    },
+    "three_samples/pearson_threshold1.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "three_samples/pearson_topk2.tsv": {
+      "sha256": "7cccc353ade3f70dcd5cc4498b71956032cee785880f73d8d2881151fd03fcf8"
+    },
+    "three_samples/spearman.tsv": {
+      "sha256": "768ac13977f31afcd48b3be5bb1d5bf2361de46cc607fe5de93c34f665873a46"
+    },
+    "three_samples/spearman_raw.tsv": {
+      "sha256": "fb7a01ea869516aeda8a80444b391395e695f96fc04a35c19a108e3df3f0b02c"
+    },
+    "three_samples/spearman_threshold0.75.tsv": {
+      "sha256": "4356768ec3a401302a1374bd3a8e56b450e5ab49cf06b758da1bf9f1c9fa62de"
+    },
+    "three_samples/spearman_threshold0.tsv": {
+      "sha256": "4356768ec3a401302a1374bd3a8e56b450e5ab49cf06b758da1bf9f1c9fa62de"
+    },
+    "three_samples/spearman_threshold1.tsv": {
+      "sha256": "b4a1a9fbb4af9e9e0e61d4652c723cf1b55e0dd221987bbc1a49275d3cd21e44"
+    },
+    "three_samples/spearman_topk2.tsv": {
+      "sha256": "0ae8221eefad6b2ecfbca2c3b2a79dc757b514624a596a4dec9eeb8e26979f46"
+    },
+    "ties_and_outliers/bicor.tsv": {
+      "sha256": "3d8be61ba729d55ac5cc739a8b54fbd7920f5eff56d1b1101a774bea037c1490"
+    },
+    "ties_and_outliers/bicor_raw.tsv": {
+      "sha256": "3d8be61ba729d55ac5cc739a8b54fbd7920f5eff56d1b1101a774bea037c1490"
+    },
+    "ties_and_outliers/bicor_threshold0.75.tsv": {
+      "sha256": "45332a3fb299b4f3bd3f1ec469880dc04c9372c9d29c46ca77256da725ac8faa"
+    },
+    "ties_and_outliers/bicor_threshold0.tsv": {
+      "sha256": "480f6b3ff852938a7f365b89f6cd788e3053eca9c6936566b4a14999da67b518"
+    },
+    "ties_and_outliers/bicor_threshold1.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "ties_and_outliers/bicor_topk2.tsv": {
+      "sha256": "7381ab2977ef0258573d7b8ce8ade8932dcf8716286367dc988fe7f157707e6c"
+    },
+    "ties_and_outliers/hellcor.tsv": {
+      "sha256": "c4a49cd75f0a6deb0852e47bc3f2113775ba65811c804b3a420de0d4da862b08"
+    },
+    "ties_and_outliers/hellcor_raw.tsv": {
+      "sha256": "0ff291938323b0343f739122303d898c9581956f77881eae03f96872cc696969"
+    },
+    "ties_and_outliers/hellcor_threshold0.75.tsv": {
+      "sha256": "5e0538eb71c5f783ed615bbcc4794b3b87c56ee8c962aa388cc4ef3b1ff104a9"
+    },
+    "ties_and_outliers/hellcor_threshold0.tsv": {
+      "sha256": "5e0538eb71c5f783ed615bbcc4794b3b87c56ee8c962aa388cc4ef3b1ff104a9"
+    },
+    "ties_and_outliers/hellcor_threshold1.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "ties_and_outliers/hellcor_topk2.tsv": {
+      "sha256": "908d48fcefded037a772791a4f1fa6790df5fb42a81e1c688bd8b5a6b4ffee07"
+    },
+    "ties_and_outliers/input.tsv": {
+      "sha256": "98973d732b1f790b42f6f5757002af5b9b57caa43b0162651765299d65c1047e"
+    },
+    "ties_and_outliers/kendall.tsv": {
+      "sha256": "42d8220be3947663c1aa74b72dadfdfd7d47421ea00102c79f69495c5b9c8da4"
+    },
+    "ties_and_outliers/kendall_raw.tsv": {
+      "sha256": "6daa35b36301c234fa1b15d4d844c44a63f184aed78f6da39687ba6260b927d3"
+    },
+    "ties_and_outliers/kendall_threshold0.75.tsv": {
+      "sha256": "9845fae4988b72283eb1208f17f6496dee546e2eaade213852c7abbf6c733de2"
+    },
+    "ties_and_outliers/kendall_threshold0.tsv": {
+      "sha256": "097d9556895e1a6f1f632980488b36220d048e78717cda6b111af9446a34c929"
+    },
+    "ties_and_outliers/kendall_threshold1.tsv": {
+      "sha256": "aeff534a622538e805bc00fceb8c8b86300fd85e73a6cf80e445479648e886e4"
+    },
+    "ties_and_outliers/kendall_topk2.tsv": {
+      "sha256": "26b2c218344665fe57b74178dc5aee1d86d5f0b368f01d8fd1d4d620b5056efd"
+    },
+    "ties_and_outliers/pearson.tsv": {
+      "sha256": "3cebdf77c02d78bdb283e737150229d20fa4dcf3dd344004ef0a658f42ea27ef"
+    },
+    "ties_and_outliers/pearson_raw.tsv": {
+      "sha256": "6f14907bcc0275dab555204f90c88dba57defb76d8539f34dcfbb1d56f135e46"
+    },
+    "ties_and_outliers/pearson_threshold0.75.tsv": {
+      "sha256": "836203650287433656fcf531d0f3c2a330ea9e99c714fb742237cbe1824f16dc"
+    },
+    "ties_and_outliers/pearson_threshold0.tsv": {
+      "sha256": "64f613b2537d52c88a499b51bc0b6aa596c6affb959f2eabdf1f4bc91cd71efd"
+    },
+    "ties_and_outliers/pearson_threshold1.tsv": {
+      "sha256": "fbdc8c006468852bbc9a81a1fe574411d08537b6f9cab90ec8b993f719f62c63"
+    },
+    "ties_and_outliers/pearson_topk2.tsv": {
+      "sha256": "8fdaea01d8fc6dcbf5aa56ce1303c5e176a75b069cc53a84e327653e8c4d01a1"
+    },
+    "ties_and_outliers/spearman.tsv": {
+      "sha256": "c42e36a20389c26fe0e5e9bd95f2289c4a7b69ce6856ffaa7b749ba620b7749b"
+    },
+    "ties_and_outliers/spearman_raw.tsv": {
+      "sha256": "2e0ebf02e9081c45f9e51fbe7765bebcc7f7fbba80c7c0ad94eee67a679f0195"
+    },
+    "ties_and_outliers/spearman_threshold0.75.tsv": {
+      "sha256": "07c966cba2711a6eb29e02022bfdecc9eed09ec26bb770c2341830a63f986bc4"
+    },
+    "ties_and_outliers/spearman_threshold0.tsv": {
+      "sha256": "9186475fb4cce481926a0d3f4f4d22f712b7352e013a7b2b31a2ba39cf511c1f"
+    },
+    "ties_and_outliers/spearman_threshold1.tsv": {
+      "sha256": "aeff534a622538e805bc00fceb8c8b86300fd85e73a6cf80e445479648e886e4"
+    },
+    "ties_and_outliers/spearman_topk2.tsv": {
+      "sha256": "6389b9611bbe5d895c8444c3d48460ebb6fe733e7aa466a276473b16dd24094a"
+    },
+    "versions.tsv": {
+      "sha256": "2d5a5309ca00a4bac01939ce27502e67fd38fe3d7e96f45af98e3868b929d675"
+    }
+  },
+  "tolerances": {
+    "continuous": {
+      "absolute": 1e-09,
+      "relative": 1e-09
+    },
+    "wald_iterative": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "rounded_counts": "exact",
+    "undefined": "matching missingness"
+  }
+}

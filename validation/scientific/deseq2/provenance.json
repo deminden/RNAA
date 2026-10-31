@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "oracle": "R/Bioconductor DESeq2",
+  "oracle_version": "1.52.0",
+  "r_version": "4.6.1",
+  "bioconductor_version": "3.23",
+  "source_repository": "https://github.com/deminden/rsdeseq2",
+  "revision": "a683dda9dc26d1e085e87f4beed87bb74ae35059",
+  "generator": {
+    "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/scripts/generate_deseq2_references.R",
+    "sha256": "b91fcf8ff3d1ea1507b05e8b2682ba275389dc5ed1738c4bfa61f23609179053"
+  },
+  "files": {
+    "counts.tsv": {
+      "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/crates/rsdeseq2/tests/data/deseq2_reference/counts.tsv",
+      "sha256": "9f5e3c729217f0338964f9d654a7e0d849d58c2f51b14e93ba57708f72843d06"
+    },
+    "col_data.tsv": {
+      "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/crates/rsdeseq2/tests/data/deseq2_reference/col_data.tsv",
+      "sha256": "716627bc1f7c3a7dbe21e82f2efa2fc2864df50fc2eb2ac0d5befed818caccf8"
+    },
+    "design_full.tsv": {
+      "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/crates/rsdeseq2/tests/data/deseq2_reference/design_full.tsv",
+      "sha256": "504256ea3f4c529b5556c4361f3b682db5e2c84e1fcc6859b77d6a0eeeb9cf44"
+    },
+    "size_factors_ratio.tsv": {
+      "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/crates/rsdeseq2/tests/data/deseq2_reference/size_factors_ratio.tsv",
+      "sha256": "10a1fb9c7316f50696b3b9701eb2faf666448551613019a2b0d4eb880ea84850"
+    },
+    "normalized_counts_ratio.tsv": {
+      "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/crates/rsdeseq2/tests/data/deseq2_reference/normalized_counts_ratio.tsv",
+      "sha256": "15c85952b88d76cd67abd916acc46e65334d4baf5548863115ec2a4595702c6d"
+    },
+    "results_wald_ratio.tsv": {
+      "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/crates/rsdeseq2/tests/data/deseq2_reference/results_wald_ratio.tsv",
+      "sha256": "ff423ba8acee13bf6a845fcf3ac54fbf2148cd7554ec5137972decf83ac70f26"
+    },
+    "metadata.tsv": {
+      "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/crates/rsdeseq2/tests/data/deseq2_reference/metadata.tsv",
+      "sha256": "de1ed022b362bda1a2450e2275ddc717d3b15886e915ac09a88686925eb674ef"
+    },
+    "sessionInfo.txt": {
+      "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/crates/rsdeseq2/tests/data/deseq2_reference/sessionInfo.txt",
+      "sha256": "63f191251ed4cf1e0d4db7f3c1cb65310722573694e03fdc3cf52c89db2bb255",
+      "original_sha256": "29c5fdf7c664e3d45a3d2141764c2f3993e50cf95a4fa3a4d02361686dae6a86",
+      "local_modification": "Redacted the original machine-specific BLAS library path; numerical reference data is unchanged."
+    },
+    "UPSTREAM_LICENSE": {
+      "source": "https://raw.githubusercontent.com/deminden/rsdeseq2/a683dda9dc26d1e085e87f4beed87bb74ae35059/LICENSE",
+      "sha256": "22eaba6f9c04801a0765b27d06cfc69abefc12e1749d80b4037c170053f31ee9"
+    }
+  },
+  "tolerances": {
+    "baseMean": {
+      "absolute": 1e-10,
+      "relative": 1e-11
+    },
+    "normalized_counts": {
+      "absolute": 1e-10,
+      "relative": 1e-11
+    },
+    "size_factors": {
+      "absolute": 1e-12,
+      "relative": 1e-12
+    },
+    "wald": {
+      "absolute": 1e-08,
+      "relative": 1e-08
+    }
+  }
+}

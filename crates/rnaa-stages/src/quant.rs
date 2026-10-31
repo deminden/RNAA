@@ -1,23 +1,37 @@
+mod external;
+mod index_group;
+mod index_plan;
+mod input;
+mod native;
+mod policy;
+mod reconcile;
+mod resources;
+pub use external::{declare_external_quant, external_quant_matches};
+pub use index_group::{QuantIndexGroup, QuantIndexStats};
+pub use index_plan::QuantIndexPlan;
+pub use policy::{
+    quant_policy_fingerprint, source_binding_current, verify_quant_catalog, verify_quant_current,
+};
+pub use reconcile::{
+    historical_quant_artifacts, reconcile_quant_artifacts, reconcile_quant_artifacts_with_inputs,
+};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use rnaa_core::config::ProjectConfig;
 use rnaa_core::manifest::{ManifestArtifact, StageManifest};
 use rnaa_core::model::{QuantArtifacts, ReferenceBundle, RunRecord, VerifiedFile};
 use rnaa_core::paths::ProjectPaths;
 use rnaa_core::traits::Quantifier;
-use rnaa_core::util::{command_version, file_size, now_rfc3339, write_json_pretty};
+use rnaa_core::util::{compute_sha256, file_size, now_rfc3339, write_json_pretty};
 use serde_json::json;
 
-use crate::r_scripts::resolve_r_script;
-
 #[derive(Debug, Clone, Default)]
-pub struct RKallistoQuantifier;
+pub struct RustKallistoQuantifier;
 
-impl Quantifier for RKallistoQuantifier {
+impl Quantifier for RustKallistoQuantifier {
     fn quantify(
         &self,
         run: &RunRecord,
@@ -26,304 +40,210 @@ impl Quantifier for RKallistoQuantifier {
         paths: &ProjectPaths,
         config: &ProjectConfig,
     ) -> Result<QuantArtifacts> {
-        let read1 = fastqs
-            .iter()
-            .find(|item| {
-                item.artifact_kind == rnaa_core::ArtifactKind::FastqR1
-                    || item.artifact_kind == rnaa_core::ArtifactKind::FastqSingle
-                    || item.artifact_kind == rnaa_core::ArtifactKind::FastqTrimmedR1
-                    || item.artifact_kind == rnaa_core::ArtifactKind::FastqTrimmedSingle
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no read1 FASTQ artifact found for run {}",
-                    run.run_accession
-                )
-            })?;
-        let read2 = fastqs.iter().find(|item| {
-            item.artifact_kind == rnaa_core::ArtifactKind::FastqR2
-                || item.artifact_kind == rnaa_core::ArtifactKind::FastqTrimmedR2
-        });
-
-        let out_dir = paths.quant_run_dir(&run.run_accession, &config.quant.engine);
-        fs::create_dir_all(&out_dir)
-            .with_context(|| format!("failed to create {}", out_dir.display()))?;
-        let manifest_path = out_dir.join("rnaa_quant_manifest.json");
-        let started_at = now_rfc3339();
-
-        let script_path = find_quant_script(paths)?;
-        if config.quant.engine != "r-kallisto" {
-            bail!(
-                "unsupported quant engine '{}'; currently only 'r-kallisto' is implemented",
-                config.quant.engine
-            );
-        }
-
-        let mut cmd = Command::new("Rscript");
-        cmd.arg("--vanilla")
-            .arg(&script_path)
-            .arg("--run")
-            .arg(&run.run_accession)
-            .arg("--fastq1")
-            .arg(&read1.path)
-            .arg("--index")
-            .arg(&reference.kallisto_index_path)
-            .arg("--threads")
-            .arg(config.quant.threads.to_string())
-            .arg("--outdir")
-            .arg(&out_dir)
-            .arg("--reference-manifest")
-            .arg(&reference.manifest_path)
-            .arg("--manifest-out")
-            .arg(&manifest_path);
-        if let Some(read2) = read2 {
-            cmd.arg("--fastq2").arg(&read2.path);
-        }
-        let status = cmd
-            .status()
-            .with_context(|| format!("failed to spawn Rscript for run {}", run.run_accession))?;
-        if !status.success() {
-            bail!(
-                "Rscript quantification failed for {} with status {}",
-                run.run_accession,
-                status
-            );
-        }
-
-        let abundance_h5 = out_dir.join("abundance.h5");
-        let run_info_json = out_dir.join("run_info.json");
-        if !abundance_h5.exists() || file_size(&abundance_h5).unwrap_or_default() == 0 {
-            bail!(
-                "quant output missing or empty abundance.h5 for {}",
-                run.run_accession
-            );
-        }
-        if !run_info_json.exists() || file_size(&run_info_json).unwrap_or_default() == 0 {
-            bail!(
-                "quant output missing or empty run_info.json for {}",
-                run.run_accession
-            );
-        }
-        let abundance_tsv = out_dir.join("abundance.tsv");
-        if abundance_tsv.exists() {
-            fs::remove_file(&abundance_tsv).with_context(|| {
-                format!(
-                    "failed to remove non-canonical abundance.tsv for {}",
-                    run.run_accession
-                )
-            })?;
-        }
-
-        // Fallback manifest writer if the R script did not generate it.
-        if !manifest_path.exists() {
-            let manifest = StageManifest {
-                schema_version: 1,
-                stage: "quant".to_string(),
-                id: run.run_accession.clone(),
-                started_at,
-                finished_at: now_rfc3339(),
-                parameters: json!({
-                    "engine": config.quant.engine,
-                    "threads": config.quant.threads,
-                    "index": reference.kallisto_index_path.display().to_string(),
-                    "outdir": out_dir.display().to_string()
-                }),
-                tool_versions: BTreeMap::from_iter(
-                    [
-                        (
-                            "Rscript".to_string(),
-                            command_version("Rscript", &["--version"]),
-                        ),
-                        (
-                            "kallisto".to_string(),
-                            command_version("kallisto", &["version"]),
-                        ),
-                    ]
-                    .into_iter()
-                    .filter_map(|(name, version)| version.map(|version| (name, version))),
-                ),
-                input_artifacts: fastqs
-                    .iter()
-                    .map(|item| ManifestArtifact {
-                        kind: item.artifact_kind.as_str().to_string(),
-                        path: item.path.display().to_string(),
-                        checksum_type: item.checksum_type.clone(),
-                        checksum: item.checksum.clone(),
-                        bytes: item.bytes,
-                    })
-                    .collect(),
-                output_artifacts: vec![
-                    ManifestArtifact {
-                        kind: "KALLISTO_DIR".to_string(),
-                        path: out_dir.display().to_string(),
-                        checksum_type: "none".to_string(),
-                        checksum: String::new(),
-                        bytes: 0,
-                    },
-                    ManifestArtifact {
-                        kind: "ABUNDANCE_H5".to_string(),
-                        path: abundance_h5.display().to_string(),
-                        checksum_type: "none".to_string(),
-                        checksum: String::new(),
-                        bytes: file_size(&abundance_h5).unwrap_or_default(),
-                    },
-                    ManifestArtifact {
-                        kind: "RUN_INFO_JSON".to_string(),
-                        path: run_info_json.display().to_string(),
-                        checksum_type: "none".to_string(),
-                        checksum: String::new(),
-                        bytes: file_size(&run_info_json).unwrap_or_default(),
-                    },
-                ],
-                notes: vec![
-                    "Fallback manifest emitted by Rust wrapper because R manifest was absent."
-                        .to_string(),
-                ],
-            };
-            write_json_pretty(&manifest_path, &manifest)?;
-        }
-
-        Ok(QuantArtifacts {
-            run_accession: run.run_accession.clone(),
-            out_dir,
-            abundance_h5,
-            run_info_json,
-            manifest_path,
-        })
+        config.quant.validate()?;
+        let group = QuantIndexGroup::new(ManifestArtifact::snapshot(
+            "REFERENCE_INDEX",
+            &reference.kallisto_index_path,
+        )?)?;
+        group.quantify(run, fastqs, reference, paths, config)
     }
 }
 
-pub fn reconcile_quant_artifacts(
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QuantSettings {
+    layout: rnaa_core::LibraryLayout,
+    strand: rnaa_core::config::QuantStrand,
+    single_fragment_length: Option<f64>,
+    single_fragment_sd: Option<f64>,
+    preprocess: bool,
+}
+
+fn quant_request(
     run: &RunRecord,
     reference: &ReferenceBundle,
-    paths: &ProjectPaths,
     config: &ProjectConfig,
-) -> Result<Option<QuantArtifacts>> {
-    let out_dir = paths.quant_run_dir(&run.run_accession, &config.quant.engine);
-    let abundance_h5 = out_dir.join("abundance.h5");
-    let run_info_json = out_dir.join("run_info.json");
-    let manifest_path = out_dir.join("rnaa_quant_manifest.json");
+    inputs: &[ManifestArtifact],
+) -> Result<rnaa_core::fingerprint::StageRequest<QuantSettings>> {
+    use rnaa_core::fingerprint::{InputIdentity, StageRequest};
+    let single = run.library_layout == rnaa_core::LibraryLayout::Single;
+    Ok(StageRequest {
+        schema_version: 1,
+        stage: "quant".into(),
+        algorithm_version: 4,
+        engines: BTreeMap::from([
+            ("kallistors".into(), crate::engines::KALLISTORS.into()),
+            (
+                "dependency_lock".into(),
+                crate::engines::DEPENDENCY_LOCK_SHA256.into(),
+            ),
+        ]),
+        parameters: QuantSettings {
+            layout: run.library_layout,
+            strand: config.quant.strand,
+            single_fragment_length: single.then_some(config.quant.single_fragment_length),
+            single_fragment_sd: single.then_some(config.quant.single_fragment_sd),
+            preprocess: config.quant.preprocess,
+        },
+        inputs: inputs.iter().map(InputIdentity::from).collect(),
+        dependencies: BTreeMap::from([(
+            "reference_index".into(),
+            compute_sha256(&reference.kallisto_index_path)?,
+        )]),
+    })
+}
 
-    for path in [&abundance_h5, &run_info_json, &manifest_path] {
-        if !path.exists() || file_size(path).unwrap_or_default() == 0 {
-            return Ok(None);
+/// Revision 3 coupled gate policy to quantification. Validate its original
+/// digest before projecting only those two fields out of the scientific key.
+/// Keep the original manifest untouched: retention receipts bind its exact bytes.
+fn request_matches(
+    saved: &serde_json::Value,
+    digest: &serde_json::Value,
+    expected: &rnaa_core::fingerprint::StageRequest<QuantSettings>,
+) -> Result<bool> {
+    use rnaa_core::fingerprint::StageRequest;
+    let Ok(mut request) = serde_json::from_value::<StageRequest<serde_json::Value>>(saved.clone())
+    else {
+        return Ok(false);
+    };
+    // A typed parse must not silently discard unrecognized top-level fields.
+    if serde_json::to_value(&request)? != *saved || request.digest()? != *digest {
+        return Ok(false);
+    }
+    if request.algorithm_version == 3 {
+        let Some(parameters) = request.parameters.as_object_mut() else {
+            return Ok(false);
+        };
+        let strict = parameters.remove("preprocess_strict");
+        let gate = parameters.remove("qc_gate");
+        if !matches!(
+            strict,
+            Some(serde_json::Value::Null | serde_json::Value::Bool(_))
+        ) {
+            return Ok(false);
+        }
+        if !gate.is_some_and(|value| {
+            value.is_null() || serde_json::from_value::<rnaa_core::PreprocessQcGate>(value).is_ok()
+        }) {
+            return Ok(false);
+        }
+        request.algorithm_version = 4;
+    }
+    if serde_json::from_value::<QuantSettings>(request.parameters.clone()).is_err() {
+        return Ok(false);
+    }
+    Ok(request.digest()? == expected.digest()?)
+}
+
+pub fn quant_request_digest(
+    run: &RunRecord,
+    reference: &ReferenceBundle,
+    config: &ProjectConfig,
+    inputs: &[ManifestArtifact],
+) -> Result<String> {
+    quant_request(run, reference, config, inputs)?.digest()
+}
+
+pub fn quant_request_value(
+    run: &RunRecord,
+    reference: &ReferenceBundle,
+    config: &ProjectConfig,
+    inputs: &[ManifestArtifact],
+) -> Result<rnaa_core::fingerprint::StageRequest<serde_json::Value>> {
+    Ok(serde_json::from_value(serde_json::to_value(
+        quant_request(run, reference, config, inputs)?,
+    )?)?)
+}
+
+/// Capture registry inputs before execution. Read digests from payloads rather
+/// than trusting potentially obsolete database checksums or sizes.
+pub fn snapshot_quant_inputs(inputs: &[VerifiedFile]) -> Result<Vec<ManifestArtifact>> {
+    inputs
+        .iter()
+        .map(|file| ManifestArtifact::snapshot(file.artifact_kind.as_str(), &file.path))
+        .collect()
+}
+
+pub fn attach_quant_request(
+    artifacts: &QuantArtifacts,
+    run: &RunRecord,
+    reference: &ReferenceBundle,
+    config: &ProjectConfig,
+    inputs: Vec<ManifestArtifact>,
+) -> Result<()> {
+    for input in &inputs {
+        if !input.matches_file()? {
+            anyhow::bail!(
+                "quantification input changed while computing: {}",
+                input.path
+            );
         }
     }
-
-    if !quant_manifest_matches_reference(&manifest_path, &reference.manifest_path)? {
-        return Ok(None);
-    }
-
-    Ok(Some(QuantArtifacts {
-        run_accession: run.run_accession.clone(),
-        out_dir,
-        abundance_h5,
-        run_info_json,
-        manifest_path,
-    }))
-}
-
-fn quant_manifest_matches_reference(
-    manifest_path: &Path,
-    expected_reference: &Path,
-) -> Result<bool> {
-    let raw = fs::read_to_string(manifest_path)
-        .with_context(|| format!("failed to read quant manifest {}", manifest_path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&raw)
-        .with_context(|| format!("failed to parse quant manifest {}", manifest_path.display()))?;
-    let manifest_reference = value
-        .get("parameters")
-        .and_then(|params| params.get("reference_manifest"))
-        .and_then(|value| value.as_str())
-        .map(PathBuf::from);
-    Ok(manifest_reference.as_deref() == Some(expected_reference))
-}
-
-#[allow(dead_code)]
-fn _exists_nonempty(path: &Path) -> bool {
-    path.exists() && file_size(path).unwrap_or_default() > 0
-}
-
-fn find_quant_script(paths: &ProjectPaths) -> Result<std::path::PathBuf> {
-    resolve_r_script(paths, "quant_kallisto.R").context(
-        "quant script could not be resolved from RNAA_R_SCRIPTS_DIR or the embedded payload",
-    )
+    let mut manifest: StageManifest = serde_json::from_slice(&fs::read(&artifacts.manifest_path)?)?;
+    let request = quant_request(run, reference, config, &inputs)?;
+    manifest.parameters["request_sha256"] = serde_json::to_value(request.digest()?)?;
+    manifest.parameters["request"] = serde_json::to_value(request)?;
+    // Preserve historical preprocessing provenance when quantification is repeated
+    // from retained trimmed reads after the original FASTQs have been removed.
+    manifest.parameters["input_lineage"] = serde_json::to_value(&manifest.input_artifacts)?;
+    manifest.input_artifacts = inputs;
+    write_json_pretty(&artifacts.manifest_path, &manifest)
 }
 
 #[cfg(test)]
-mod tests {
+mod request_tests {
     use super::*;
-    use rnaa_core::config::ProjectConfig;
-    use rnaa_core::model::{LibraryLayout, RunRecord};
-    use rnaa_core::paths::ProjectPaths;
-    use rnaa_core::state::RunState;
-    use rnaa_core::util::{now_rfc3339, write_json_pretty};
-    use serde_json::json;
-    use std::collections::BTreeMap;
-
+    use rnaa_core::fingerprint::StageRequest;
     #[test]
-    fn reconcile_quant_artifacts_accepts_matching_reference_manifest() {
-        let temp = tempfile::tempdir().unwrap();
-        let paths = ProjectPaths::new(temp.path());
-        paths.ensure_layout().unwrap();
-        let config = ProjectConfig::default();
-        let run = RunRecord {
-            project_id: "p".to_string(),
-            study_accession: "SRP1".to_string(),
-            source_study_accession: None,
-            run_accession: "SRR1".to_string(),
-            sample_accession: None,
-            experiment_accession: None,
-            library_layout: LibraryLayout::Single,
-            instrument_platform: None,
-            instrument_model: None,
-            remote_files: Vec::new(),
-            metadata: BTreeMap::new(),
-            state: RunState::Verified,
-            last_error: None,
-            updated_at: now_rfc3339(),
+    fn legacy_qc_policy_can_change_without_rewriting_or_trusting_a_tampered_request() -> Result<()>
+    {
+        let expected = StageRequest {
+            schema_version: 1,
+            stage: "quant".into(),
+            algorithm_version: 4,
+            engines: BTreeMap::new(),
+            parameters: QuantSettings {
+                layout: rnaa_core::LibraryLayout::Single,
+                strand: rnaa_core::config::QuantStrand::Unstranded,
+                single_fragment_length: Some(200.0),
+                single_fragment_sd: Some(20.0),
+                preprocess: true,
+            },
+            inputs: Vec::new(),
+            dependencies: BTreeMap::new(),
         };
-        let reference = ReferenceBundle {
-            id: "human".to_string(),
-            organism: "human".to_string(),
-            ensembl_release: "115".to_string(),
-            cdna_path: temp.path().join("cdna.fa.gz"),
-            gtf_path: temp.path().join("genes.gtf.gz"),
-            kallisto_index_path: temp.path().join("kallisto.index"),
-            tx2gene_path: temp.path().join("tx2gene.tsv"),
-            gene_annotation_path: None,
-            manifest_path: temp.path().join("ref_manifest.json"),
+        let mut legacy = serde_json::to_value(&expected)?;
+        legacy["algorithm_version"] = serde_json::json!(3);
+        legacy["parameters"]["preprocess_strict"] = serde_json::json!(true);
+        legacy["parameters"]["qc_gate"] =
+            serde_json::to_value(rnaa_core::PreprocessQcGate::default())?;
+        let digest = |value: &serde_json::Value| -> Result<serde_json::Value> {
+            Ok(serde_json::json!(
+                serde_json::from_value::<StageRequest<serde_json::Value>>(value.clone())?
+                    .digest()?
+            ))
         };
-
-        fs::write(&reference.manifest_path, "{}").unwrap();
-        let out_dir = paths.quant_run_dir(&run.run_accession, &config.quant.engine);
-        fs::create_dir_all(&out_dir).unwrap();
-        fs::write(out_dir.join("abundance.h5"), b"abc").unwrap();
-        fs::write(out_dir.join("run_info.json"), b"{}").unwrap();
-        write_json_pretty(
-            &out_dir.join("rnaa_quant_manifest.json"),
-            &json!({
-                "parameters": {
-                    "reference_manifest": reference.manifest_path.display().to_string()
-                }
-            }),
-        )
-        .unwrap();
-
-        let artifacts = reconcile_quant_artifacts(&run, &reference, &paths, &config).unwrap();
-        assert!(artifacts.is_some());
-    }
-
-    #[test]
-    fn quant_script_resolution_finds_a_usable_script() {
-        let temp = tempfile::tempdir().unwrap();
-        let paths = ProjectPaths::new(temp.path());
-        paths.ensure_layout().unwrap();
-        let script = find_quant_script(&paths).unwrap();
-        assert!(script.exists());
-        assert_eq!(
-            script.file_name().and_then(|v| v.to_str()),
-            Some("quant_kallisto.R")
+        let original = legacy.clone();
+        let original_digest = digest(&legacy)?;
+        assert!(request_matches(&legacy, &original_digest, &expected)?);
+        assert_eq!(legacy, original);
+        legacy["parameters"]["preprocess_strict"] = serde_json::json!(false);
+        legacy["parameters"]["qc_gate"]["min_pass_rate"] = serde_json::json!(0.99);
+        assert!(
+            !request_matches(&legacy, &original_digest, &expected)?,
+            "validate the saved original digest before projection"
         );
+        assert!(request_matches(&legacy, &digest(&legacy)?, &expected)?);
+        legacy["parameters"]["single_fragment_length"] = serde_json::json!(250.0);
+        assert!(!request_matches(&legacy, &digest(&legacy)?, &expected)?);
+        legacy = original.clone();
+        legacy["parameters"]["unknown_count_option"] = serde_json::json!(true);
+        assert!(!request_matches(&legacy, &digest(&legacy)?, &expected)?);
+        legacy = original;
+        legacy["unexpected_top_level"] = serde_json::json!(true);
+        assert!(!request_matches(&legacy, &digest(&legacy)?, &expected)?);
+        let current = serde_json::to_value(&expected)?;
+        assert!(request_matches(&current, &digest(&current)?, &expected)?);
+        Ok(())
     }
 }

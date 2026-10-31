@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "oracle": "independent R package execution",
+  "versions": {
+    "R": "4.6.2",
+    "tximport": "1.40.0",
+    "DESeq2": "1.52.0"
+  },
+  "generator": {
+    "path": "generate_import.R",
+    "sha256": "240b84d9487050b60e001f80c305d10f5f09ed584815b8cda6b1e3dfd26e2c80"
+  },
+  "sources": {
+    "R": {
+      "version": "4.6.2",
+      "url": "https://cran.r-project.org/bin/macosx/sonoma-arm64/base/R-4.6.2-arm64.pkg",
+      "sha256": "a678b4db1fcd71b1b1cc58edcfa4a8d36ee012a02659dde9eab9366e93571157"
+    },
+    "tximport": {
+      "version": "1.40.0",
+      "url": "https://bioconductor.posit.co/packages/3.23/bioc/src/contrib/tximport_1.40.0.tar.gz",
+      "sha256": "72841a6b2ac1f64ccb05af2d9fba4eea781596771798cefcb3a9327f9dc929f9"
+    },
+    "DESeq2": {
+      "version": "1.52.0",
+      "url": "https://bioconductor.posit.co/packages/3.23/bioc/src/contrib/DESeq2_1.52.0.tar.gz",
+      "sha256": "8c91699286336350e66eec132ce6fdf5bb4af78e2a4d015a5a61224f62a95984"
+    }
+  },
+  "files": {
+    "fractional_and_zero_abundance/lengthScaledTPM_counts.tsv": {
+      "sha256": "7baa76b903b737be36a3ff0176e82f900a74feb2b322b05370f108407f257640"
+    },
+    "fractional_and_zero_abundance/length_factors.tsv": {
+      "sha256": "daff94237d2591d67fbdb9dd9a6f68a66a50539766eb5c5cf9241a3c0b343dc6"
+    },
+    "fractional_and_zero_abundance/no_counts.tsv": {
+      "sha256": "078c09abc66f8c92057aceab894e64c8f96ac8bec4af3708f5fd83372ade113c"
+    },
+    "fractional_and_zero_abundance/normalization_factors.tsv": {
+      "sha256": "979ee8e1af2eead905de6ab54d526b50d25c918afe982d4d7c5620b9ce85175e"
+    },
+    "fractional_and_zero_abundance/normalized_counts.tsv": {
+      "sha256": "a17bcee6e09300a0146fc0399d8f36c97b151e3a43cf1227e4c0c4065a1c65bb"
+    },
+    "fractional_and_zero_abundance/sample1.tsv": {
+      "sha256": "08012a36ce4a97bb3dfa3c95d2dc0befdcae126c95061f8ae6c8a57eebab995f"
+    },
+    "fractional_and_zero_abundance/sample2.tsv": {
+      "sha256": "a963c86d87104951e6ba2e1f1f44f1fe24c65023363a1c51d4178b2d6a77bbc6"
+    },
+    "fractional_and_zero_abundance/sample3.tsv": {
+      "sha256": "aa488dd7ca0591d89aa4a18bc7b366cc8dc6471be294effbbf4e896882322e1b"
+    },
+    "fractional_and_zero_abundance/sample4.tsv": {
+      "sha256": "622f4ed35558c93141347ca6133292951617475864facd40a46c585bb84f2df0"
+    },
+    "fractional_and_zero_abundance/scaledTPM_counts.tsv": {
+      "sha256": "35513191fa6a366d7bad522743f50a6e26ce0d7f5a67fa151b603e69090d30dd"
+    },
+    "fractional_and_zero_abundance/tx2gene.tsv": {
+      "sha256": "bbf661bffe15fa5f8dc9da4541a7660df90e8c0762e2fd80d4ece902a45ada6a"
+    },
+    "sessionInfo.txt": {
+      "sha256": "d80889a2ad65f0cc5116a9187ceb7a0b48633b85f90af02ba5732d7d6ff0fdd5"
+    },
+    "versions.tsv": {
+      "sha256": "db77f52261e428c9163ed647cb8b59db12b8c22ec341e26418d5575fa4f4535c"
+    },
+    "zero_length_without_mass/lengthScaledTPM_counts.tsv": {
+      "sha256": "7baa76b903b737be36a3ff0176e82f900a74feb2b322b05370f108407f257640"
+    },
+    "zero_length_without_mass/length_factors.tsv": {
+      "sha256": "daff94237d2591d67fbdb9dd9a6f68a66a50539766eb5c5cf9241a3c0b343dc6"
+    },
+    "zero_length_without_mass/no_counts.tsv": {
+      "sha256": "078c09abc66f8c92057aceab894e64c8f96ac8bec4af3708f5fd83372ade113c"
+    },
+    "zero_length_without_mass/normalization_factors.tsv": {
+      "sha256": "979ee8e1af2eead905de6ab54d526b50d25c918afe982d4d7c5620b9ce85175e"
+    },
+    "zero_length_without_mass/normalized_counts.tsv": {
+      "sha256": "a17bcee6e09300a0146fc0399d8f36c97b151e3a43cf1227e4c0c4065a1c65bb"
+    },
+    "zero_length_without_mass/sample1.tsv": {
+      "sha256": "e327cfaa178c21286cae29fe3308073b509732c47a551b6a21a8ab5af97a54cd"
+    },
+    "zero_length_without_mass/sample2.tsv": {
+      "sha256": "a963c86d87104951e6ba2e1f1f44f1fe24c65023363a1c51d4178b2d6a77bbc6"
+    },
+    "zero_length_without_mass/sample3.tsv": {
+      "sha256": "aa488dd7ca0591d89aa4a18bc7b366cc8dc6471be294effbbf4e896882322e1b"
+    },
+    "zero_length_without_mass/sample4.tsv": {
+      "sha256": "622f4ed35558c93141347ca6133292951617475864facd40a46c585bb84f2df0"
+    },
+    "zero_length_without_mass/scaledTPM_counts.tsv": {
+      "sha256": "35513191fa6a366d7bad522743f50a6e26ce0d7f5a67fa151b603e69090d30dd"
+    },
+    "zero_length_without_mass/tx2gene.tsv": {
+      "sha256": "bbf661bffe15fa5f8dc9da4541a7660df90e8c0762e2fd80d4ece902a45ada6a"
+    }
+  },
+  "tolerances": {
+    "continuous": {
+      "absolute": 1e-09,
+      "relative": 1e-09
+    },
+    "wald_iterative": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "rounded_counts": "exact",
+    "undefined": "matching missingness"
+  }
+}

@@ -1,18 +1,16 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::fs::OpenOptions;
-use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use reqwest::StatusCode;
-use reqwest::blocking::Client;
-use reqwest::header::RANGE;
-use rnaa_core::config::{DownloadMethod, DownloadPreference, ProjectConfig};
+use rnaa_core::config::{DownloadPreference, ProjectConfig};
 use rnaa_core::db::Database;
+use rnaa_core::generations::{Generation, OutputGroup};
+use rnaa_core::jobs::{JobLease, JobOutcome};
 use rnaa_core::manifest::{ManifestArtifact, StageManifest};
 use rnaa_core::model::{
     ArtifactKind, ArtifactRecord, RemoteFile, RemoteFileKind, RunRecord, VerifiedFile,
@@ -21,35 +19,135 @@ use rnaa_core::paths::ProjectPaths;
 use rnaa_core::state::RunState;
 use rnaa_core::traits::Downloader;
 use rnaa_core::util::{
-    compute_md5, compute_sha256, dir_size, file_size, now_rfc3339, parse_size_bytes,
-    sanitize_basename, write_json_pretty,
+    compute_md5, compute_sha256, dir_size, file_size, now_rfc3339, parse_size_bytes, publish_file,
+    sanitize_basename,
 };
 use serde_json::json;
 use tracing::{error, info, warn};
+mod files;
+mod publication;
+mod resources;
+mod reuse;
+use files::{verify_existing_or_download, verify_local_file};
+use reuse::DownloadObservation;
 
 #[derive(Debug, Clone, Default)]
-pub struct ShellDownloader;
+pub struct ReqwestDownloader;
 
-impl ShellDownloader {
+impl ReqwestDownloader {
+    pub fn fastq_recovery_available(
+        &self,
+        run: &RunRecord,
+        preference: DownloadPreference,
+    ) -> bool {
+        let files = self.select_remote_files(run, preference);
+        let singles = files
+            .iter()
+            .filter(|file| file.kind == RemoteFileKind::Fastq)
+            .count();
+        let first = files
+            .iter()
+            .filter(|file| file.kind == RemoteFileKind::FastqR1)
+            .count();
+        let second = files
+            .iter()
+            .filter(|file| file.kind == RemoteFileKind::FastqR2)
+            .count();
+        match run.library_layout {
+            rnaa_core::LibraryLayout::Single => singles > 0 && singles == files.len(),
+            rnaa_core::LibraryLayout::Paired => {
+                first > 0 && first == second && first + second == files.len()
+            }
+            _ => false,
+        }
+    }
+
+    pub fn source_request_digest(
+        &self,
+        run: &RunRecord,
+        preference: DownloadPreference,
+    ) -> Result<String> {
+        download_request(run, preference)?.digest()
+    }
+
+    /// Recover one requested run through the normal owned, resumable publisher.
+    pub fn recover_inputs(
+        &self,
+        db: &Database,
+        paths: &ProjectPaths,
+        config: &ProjectConfig,
+        run: &str,
+    ) -> Result<()> {
+        let selected = db.get_run(run)?.context("recovery run disappeared")?;
+        if !self.fastq_recovery_available(&selected, config.download.prefer) {
+            bail!(
+                "no complete downloadable FASTQ group for {run}; restore/register original reads or resolve a supported FASTQ source"
+            );
+        }
+        self.process_run(db, paths, config, &selected)?;
+        while db
+            .get_run(run)?
+            .is_some_and(|run| run.state == RunState::Downloading)
+        {
+            db.recover_jobs()?;
+            thread::sleep(Duration::from_millis(200));
+        }
+        if !db.get_run(run)?.is_some_and(|run| {
+            rnaa_core::eligibility::quantified(run.state)
+                || matches!(
+                    run.state,
+                    RunState::Verified
+                        | RunState::PreprocessDone
+                        | RunState::QuantRunning
+                        | RunState::QuantDone
+                )
+        }) {
+            bail!(
+                "input recovery for {run} did not complete; inspect its current attempt/error and retry"
+            );
+        }
+        Ok(())
+    }
+
     pub fn run_worker(
         &self,
         db: Database,
         paths: ProjectPaths,
-        config: ProjectConfig,
+        mut config: ProjectConfig,
         concurrency: usize,
         forever: bool,
         prefer: Option<DownloadPreference>,
     ) -> Result<()> {
+        if let Some(preference) = prefer {
+            config.download.prefer = preference;
+        }
+        config.download.concurrency = concurrency;
+        config.download.validate()?;
+        if concurrency == 0 {
+            bail!("download concurrency must be positive");
+        }
+        let mut deep_check = true;
         let concurrency = concurrency.max(1);
         let storage_limit_bytes = configured_storage_limit_bytes(&config)?;
         loop {
-            let runs = db.list_runs_in_states(&[
+            self.reconcile_completed(&db, &config, deep_check)?;
+            deep_check = false;
+            db.recover_jobs()?;
+            db.recover_generations()?;
+            let runs = db.list_active_runs_in_states(&[
                 RunState::Resolved,
                 RunState::DownloadFailed,
                 RunState::VerifyFailed,
                 RunState::Downloaded,
             ])?;
             if runs.is_empty() {
+                if !db
+                    .list_active_runs_in_states(&[RunState::Downloading])?
+                    .is_empty()
+                {
+                    thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
                 if forever {
                     thread::sleep(Duration::from_secs(30));
                     continue;
@@ -58,6 +156,7 @@ impl ShellDownloader {
             }
 
             let queue = Arc::new(Mutex::new(runs));
+            let failures = Arc::new(AtomicUsize::new(0));
             let mut handles = Vec::new();
             for _ in 0..concurrency {
                 let queue = Arc::clone(&queue);
@@ -68,8 +167,17 @@ impl ShellDownloader {
                     config.download.prefer = prefer;
                 }
                 let downloader = self.clone();
+                let failures = Arc::clone(&failures);
                 handles.push(thread::spawn(move || {
                     loop {
+                        // An empty queue is finished even when the final download
+                        // crosses the active-storage threshold. Only queued work
+                        // waits for completed-count cleanup to free space.
+                        let run = {
+                            let mut queue = queue.lock().expect("queue poisoned");
+                            queue.pop()
+                        };
+                        let Some(run) = run else { break };
                         if let Some(limit_bytes) = storage_limit_bytes {
                             while project_active_storage_bytes(&paths) >= limit_bytes {
                                 info!(
@@ -80,24 +188,9 @@ impl ShellDownloader {
                                 thread::sleep(Duration::from_secs(30));
                             }
                         }
-                        let run = {
-                            let mut queue = queue.lock().expect("queue poisoned");
-                            queue.pop()
-                        };
-                        let Some(run) = run else { break };
                         if let Err(err) = downloader.process_run(&db, &paths, &config, &run) {
                             error!("download failed for {}: {err:#}", run.run_accession);
-                            let _ = db.set_run_state(
-                                &run.run_accession,
-                                RunState::DownloadFailed,
-                                Some(&format!("{err:#}")),
-                            );
-                            let _ = db.append_event(
-                                "download",
-                                Some(&run.run_accession),
-                                "download failed",
-                                json!({"error": format!("{err:#}")}),
-                            );
+                            failures.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                 }));
@@ -110,8 +203,31 @@ impl ShellDownloader {
             }
 
             if !forever {
+                let failed = failures.load(Ordering::Relaxed);
+                if failed > 0 {
+                    bail!("download failed for {failed} requested run(s)");
+                }
+                // A second finite downloader may be finishing other claims. Do
+                // not announce completion while it still owns requested work.
+                while !db
+                    .list_active_runs_in_states(&[RunState::Downloading])?
+                    .is_empty()
+                {
+                    db.recover_jobs()?;
+                    thread::sleep(Duration::from_millis(200));
+                }
+                let failed = db
+                    .list_active_runs_in_states(&[
+                        RunState::DownloadFailed,
+                        RunState::VerifyFailed,
+                    ])?
+                    .len();
+                if failed > 0 {
+                    bail!("download failed for {failed} requested run(s)");
+                }
                 break;
             }
+            thread::sleep(Duration::from_secs(30));
         }
         Ok(())
     }
@@ -122,40 +238,188 @@ impl ShellDownloader {
         paths: &ProjectPaths,
         config: &ProjectConfig,
         run: &RunRecord,
+    ) -> Result<()> {
+        if !db
+            .list_active_runs()?
+            .iter()
+            .any(|current| current.run_accession == run.run_accession)
+        {
+            return Ok(());
+        }
+        let Some(mut lease) = JobLease::try_acquire(
+            db,
+            "download",
+            Some(&run.run_accession),
+            &[
+                RunState::Resolved,
+                RunState::DownloadFailed,
+                RunState::VerifyFailed,
+                RunState::Downloaded,
+            ],
+        )?
+        else {
+            return Ok(());
+        };
+        let owned = lease.database();
+        match self.process_run_owned(&owned, paths, config, run, lease.attempt_id()) {
+            Ok(_) => lease.finish(JobOutcome::Succeeded, None),
+            Err(error) => {
+                let message = format!("{error:#}");
+                // This handle cannot overwrite a newer owner, including during
+                // error handling. Cancellation may intentionally reject these.
+                let _ = owned.atomic(|db| {
+                    db.set_run_state(&run.run_accession, RunState::DownloadFailed, Some(&message))?;
+                    db.append_event(
+                        "download",
+                        Some(&run.run_accession),
+                        "download failed",
+                        json!({"error":message}),
+                    )?;
+                    db.complete_owned_job(JobOutcome::Failed, Some(&message))
+                });
+                lease.finish(JobOutcome::Failed, Some(&message))?;
+                Err(error)
+            }
+        }
+    }
+
+    fn process_run_owned(
+        &self,
+        db: &Database,
+        paths: &ProjectPaths,
+        config: &ProjectConfig,
+        queued: &RunRecord,
+        attempt_id: &str,
     ) -> Result<Vec<VerifiedFile>> {
-        db.set_run_state(&run.run_accession, RunState::Downloading, None)?;
+        let run = db
+            .get_run(&queued.run_accession)?
+            .context("claimed download run disappeared")?;
+        let request = download_request(&run, config.download.prefer)?;
+        let digest = request.digest()?;
+        db.set_job_request(&digest)?;
+        let observation = DownloadObservation::capture(db)?;
+        if let Some(files) = self.reuse_download(db, paths, config, &run, &request, &observation)? {
+            return Ok(files);
+        }
+        let admission = rnaa_core::resources::ExecutionResources::open(
+            &config.resources,
+            rnaa_core::resources::ReservationOwner {
+                project_root: fs::canonicalize(&paths.root)?,
+                attempt_id: attempt_id.into(),
+                stage: "download".into(),
+                run_accession: Some(run.run_accession.clone()),
+            },
+        )?;
         db.append_event(
             "download",
             Some(&run.run_accession),
             "download started",
-            json!({"prefer": config.download.prefer, "method": config.download.method}),
+            json!({"prefer":config.download.prefer, "method":config.download.method}),
         )?;
-
-        let verified = self.ensure_downloaded(run, paths, config)?;
-        for item in &verified {
-            let artifact = ArtifactRecord {
-                project_id: db.project_id().to_string(),
-                run_accession: Some(run.run_accession.clone()),
-                kind: item.artifact_kind,
-                path: item.path.display().to_string(),
-                blob_id: None,
-                shared_path: None,
-                checksum_type: item.checksum_type.clone(),
-                checksum: item.checksum.clone(),
-                bytes: item.bytes,
-                created_at: now_rfc3339(),
-            };
-            db.record_artifact(&artifact)?;
+        let transfer = paths.for_download_transfer(&run.run_accession, &digest);
+        let check = || db.check_job();
+        let cached = self.download_files(&run, &transfer, config, Some(&admission), &check)?;
+        publication::Publication {
+            db,
+            paths,
+            config,
+            run: &run,
+            request: &request,
+            observation: &observation,
+            admission: &admission,
         }
+        .publish(&transfer, cached)
+    }
 
-        db.set_run_state(&run.run_accession, RunState::Verified, None)?;
-        let total_bytes = verified.iter().map(|item| item.bytes).sum::<u64>();
-        db.append_event(
-            "download",
-            Some(&run.run_accession),
-            "download verified",
-            json!({"files": verified.len(), "bytes": total_bytes}),
-        )?;
+    fn reconcile_completed(&self, db: &Database, config: &ProjectConfig, deep: bool) -> Result<()> {
+        db.with_idle_analysis(|db| {
+            for queued in db.list_active_runs()? {
+                if matches!(queued.state, RunState::Resolved | RunState::Downloading | RunState::DownloadFailed | RunState::VerifyFailed | RunState::Downloaded) { continue; }
+                db.with_idle_run(&queued.run_accession, |db| {
+                    let Some(run) = db.get_run(&queued.run_accession)? else { return Ok(()) };
+                    let Some(head) = db.generation_head(OutputGroup::Download, &run.run_accession)? else { return Ok(()) };
+                    if head.request_sha256 == download_request(&run, config.download.prefer)?.digest()?
+                        && (!deep || db.verify_generation(OutputGroup::Download, &run.run_accession)?) { return Ok(()); }
+                    let reason = "download source selection or verified generation changed; redownload required";
+                    db.atomic(|db| {
+                        db.set_run_state(&run.run_accession, RunState::Resolved, Some(reason))?;
+                        for stage in ["normalize", "deseq2", "corr"] {
+                            if db.get_project_stage_state(stage)?.is_some() { db.set_project_stage_state(stage, rnaa_core::ProjectStageState::Pending, Some(reason))?; }
+                        }
+                        db.append_event("download", Some(&run.run_accession), "completed download invalidated", json!({"reason":reason}))
+                    })
+                })?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    fn download_files(
+        &self,
+        run: &RunRecord,
+        paths: &ProjectPaths,
+        config: &ProjectConfig,
+        admission: Option<&rnaa_core::resources::ExecutionResources>,
+        check: &impl Fn() -> Result<()>,
+    ) -> Result<Vec<VerifiedFile>> {
+        let remotes = self.select_remote_files(run, config.download.prefer);
+        if remotes.is_empty() {
+            bail!("no downloadable files resolved for {}", run.run_accession);
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for remote in &remotes {
+            if matches!(remote.basename.as_str(), "" | "." | "..")
+                || !names.insert(sanitize_basename(&remote.basename))
+            {
+                bail!("download basenames are empty or collide after sanitizing");
+            }
+            if let Some(md5) = &remote.md5
+                && (md5.len() != 32 || !md5.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            {
+                bail!("invalid authoritative MD5");
+            }
+        }
+        let singles = remotes
+            .iter()
+            .filter(|file| file.kind == RemoteFileKind::Fastq)
+            .count();
+        let first = remotes
+            .iter()
+            .filter(|file| file.kind == RemoteFileKind::FastqR1)
+            .count();
+        let second = remotes
+            .iter()
+            .filter(|file| file.kind == RemoteFileKind::FastqR2)
+            .count();
+        if singles + first + second > 0
+            && !matches!(run.library_layout,
+            rnaa_core::LibraryLayout::Single if singles == remotes.len())
+            && !(run.library_layout == rnaa_core::LibraryLayout::Paired
+                && singles == 0
+                && first > 0
+                && first == second
+                && first + second == remotes.len())
+        {
+            bail!(
+                "download selection is not a complete FASTQ group for {} layout",
+                run.library_layout
+            );
+        }
+        let mut verified = Vec::new();
+        for remote in remotes {
+            check()?;
+            let target = self.local_target_path(paths, run, remote);
+            let part = target.with_added_extension("part");
+            verified.push(verify_existing_or_download(
+                remote,
+                &target,
+                &part,
+                &config.download,
+                admission,
+                check,
+            )?);
+        }
         Ok(verified)
     }
 
@@ -196,14 +460,12 @@ impl ShellDownloader {
         remote: &RemoteFile,
     ) -> PathBuf {
         let basename = sanitize_basename(&remote.basename);
-        paths.raw_run_dir(&run.run_accession).join(basename)
-    }
-
-    fn download_to_part(&self, method: DownloadMethod, url: &str, part_path: &Path) -> Result<()> {
-        match method {
-            DownloadMethod::Reqwest => download_with_reqwest(url, part_path),
-        }?;
-        Ok(())
+        // Private per-file directories keep payload basenames from colliding with
+        // another file's .part/checkpoint/receipt names.
+        paths
+            .raw_run_dir(&run.run_accession)
+            .join(&basename)
+            .join(basename)
     }
 }
 
@@ -217,339 +479,98 @@ fn configured_storage_limit_bytes(config: &ProjectConfig) -> Result<Option<u64>>
 
 fn project_active_storage_bytes(paths: &ProjectPaths) -> u64 {
     [
-        &paths.raw_dir,
-        &paths.quant_dir,
-        &paths.de_dir,
-        &paths.corr_dir,
-        &paths.refs_dir,
-        &paths.metadata_dir,
-        &paths.support_dir,
+        "raw",
+        "quant",
+        "de",
+        "corr",
+        "refs",
+        "metadata",
+        ".rnaa_support",
+        ".rnaa_generations",
+        ".rnaa_transfers",
     ]
     .into_iter()
-    .map(|path| dir_size(path))
+    .map(|directory| dir_size(&paths.root.join(directory)))
     .sum()
 }
 
-impl Downloader for ShellDownloader {
+impl Downloader for ReqwestDownloader {
     fn ensure_downloaded(
         &self,
         run: &RunRecord,
         paths: &ProjectPaths,
         config: &ProjectConfig,
     ) -> Result<Vec<VerifiedFile>> {
-        let remote_files = self.select_remote_files(run, config.download.prefer);
-        if remote_files.is_empty() {
-            bail!("no downloadable files resolved for {}", run.run_accession);
-        }
-
-        let run_dir = paths.raw_run_dir(&run.run_accession);
-        fs::create_dir_all(&run_dir)
-            .with_context(|| format!("failed to create {}", run_dir.display()))?;
-        let started_at = now_rfc3339();
-        let mut outputs = Vec::new();
-        let mut manifest_outputs = Vec::new();
-
-        for remote in &remote_files {
-            let target_path = self.local_target_path(paths, run, remote);
-            let part_path = target_path.with_extension(format!(
-                "{}.part",
-                target_path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .unwrap_or_default()
-            ));
-            let mut last_error = None;
-
-            for attempt in 0..=config.download.retries {
-                match verify_existing_or_download(
-                    self,
-                    config.download.method,
-                    remote,
-                    &target_path,
-                    &part_path,
-                ) {
-                    Ok(verified) => {
-                        manifest_outputs.push(ManifestArtifact {
-                            kind: verified.artifact_kind.as_str().to_string(),
-                            path: verified.path.display().to_string(),
-                            checksum_type: verified.checksum_type.clone(),
-                            checksum: verified.checksum.clone(),
-                            bytes: verified.bytes,
-                        });
-                        outputs.push(verified);
-                        last_error = None;
-                        break;
-                    }
-                    Err(err) => {
-                        last_error = Some(format!("{err:#}"));
-                        warn!(
-                            "download attempt {} failed for {}: {err:#}",
-                            attempt + 1,
-                            remote.url
-                        );
-                        if attempt < config.download.retries {
-                            let backoff = config
-                                .download
-                                .backoff_seconds
-                                .get(attempt as usize)
-                                .copied()
-                                .unwrap_or(30);
-                            thread::sleep(Duration::from_secs(backoff));
-                        }
-                    }
-                }
-            }
-
-            if let Some(error) = last_error {
-                return Err(anyhow!(
-                    "failed to download {} after retries: {error}",
-                    remote.url
-                ));
-            }
-        }
-
-        let manifest = StageManifest {
-            schema_version: 1,
-            stage: "download".to_string(),
-            id: run.run_accession.clone(),
-            started_at,
-            finished_at: now_rfc3339(),
-            parameters: json!({
-                "preference": config.download.prefer,
-                "method": config.download.method,
-                "retries": config.download.retries,
-                "backoff_seconds": config.download.backoff_seconds,
-            }),
-            tool_versions: BTreeMap::from([(
-                "native_http".to_string(),
-                "reqwest-blocking".to_string(),
-            )]),
-            input_artifacts: remote_files
-                .iter()
-                .map(|remote| ManifestArtifact {
-                    kind: remote.kind.as_str().to_string(),
-                    path: remote.url.clone(),
-                    checksum_type: if remote.md5.is_some() {
-                        "md5".to_string()
-                    } else {
-                        "none".to_string()
-                    },
-                    checksum: remote.md5.clone().unwrap_or_default(),
-                    bytes: remote.bytes.unwrap_or_default(),
-                })
-                .collect(),
-            output_artifacts: manifest_outputs,
-            notes: vec![
-                "Downloads use a .part file and atomic rename.".to_string(),
-                "If authoritative md5 is unavailable, RNAA records the local sha256 plus any remote size check."
-                    .to_string(),
-            ],
-        };
-        write_json_pretty(
-            &paths.manifest_path("download", &run.run_accession),
-            &manifest,
-        )?;
-
-        Ok(outputs)
+        self.download_files(run, paths, config, None, &|| Ok(()))
     }
 }
 
-fn download_with_reqwest(url: &str, part_path: &Path) -> Result<()> {
-    if let Some(parent) = part_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
+fn assert_download_request(
+    db: &Database,
+    run: &str,
+    preference: DownloadPreference,
+    expected: &str,
+) -> Result<()> {
+    let latest = db.get_run(run)?.context("download run disappeared")?;
+    if download_request(&latest, preference)?.digest()? != expected {
+        bail!("download source metadata changed during transfer");
     }
-
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(30))
-        .timeout(None)
-        .build()
-        .context("failed to build reqwest client")?;
-
-    let existing_bytes = if part_path.exists() {
-        file_size(part_path)?
-    } else {
-        0
-    };
-
-    let mut request = client.get(url);
-    if existing_bytes > 0 {
-        request = request.header(RANGE, format!("bytes={existing_bytes}-"));
-    }
-
-    let mut response = request
-        .send()
-        .with_context(|| format!("failed to request {url}"))?;
-
-    if response.status() == StatusCode::RANGE_NOT_SATISFIABLE && existing_bytes > 0 {
-        return Ok(());
-    }
-
-    if !response.status().is_success() {
-        bail!(
-            "http download failed for {url} with status {}",
-            response.status()
-        );
-    }
-
-    let resume_supported = existing_bytes > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
-    let mut output = if resume_supported {
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(part_path)
-            .with_context(|| format!("failed to open {} for append", part_path.display()))?
-    } else {
-        fs::File::create(part_path)
-            .with_context(|| format!("failed to create {}", part_path.display()))?
-    };
-
-    io::copy(&mut response, &mut output)
-        .with_context(|| format!("failed to write download body to {}", part_path.display()))?;
     Ok(())
 }
 
-fn verify_existing_or_download(
-    downloader: &ShellDownloader,
-    method: DownloadMethod,
-    remote: &RemoteFile,
-    target_path: &Path,
-    part_path: &Path,
-) -> Result<VerifiedFile> {
-    if let Some(existing) = verify_local_file(remote, target_path)? {
-        return Ok(existing);
-    }
+fn download_request(
+    run: &RunRecord,
+    preference: DownloadPreference,
+) -> Result<rnaa_core::fingerprint::StageRequest<serde_json::Value>> {
+    let mut files = ReqwestDownloader.select_remote_files(run, preference);
+    files.sort_by(|a, b| a.basename.cmp(&b.basename).then(a.url.cmp(&b.url)));
+    Ok(rnaa_core::fingerprint::StageRequest {
+        schema_version: 1,
+        stage: "download".into(),
+        algorithm_version: 2,
+        engines: BTreeMap::new(),
+        parameters: json!({"layout":run.library_layout, "preference":preference, "files":files}),
+        inputs: vec![],
+        dependencies: BTreeMap::new(),
+    })
+}
 
-    if part_path.exists() {
-        info!("resuming partial download {}", part_path.display());
-    }
-    downloader.download_to_part(method, &remote.url, part_path)?;
-    fs::rename(part_path, target_path).with_context(|| {
-        format!(
-            "failed to rename {} to {}",
-            part_path.display(),
-            target_path.display()
-        )
-    })?;
-    match verify_local_file(remote, target_path)? {
-        Some(verified) => Ok(verified),
-        None => bail!(
-            "downloaded file {} did not pass verification",
-            target_path.display()
-        ),
+fn artifact_record(db: &Database, run: &str, file: &VerifiedFile) -> ArtifactRecord {
+    ArtifactRecord {
+        project_id: db.project_id().into(),
+        run_accession: Some(run.into()),
+        kind: file.artifact_kind,
+        path: file.path.display().to_string(),
+        blob_id: None,
+        shared_path: None,
+        checksum_type: file.checksum_type.clone(),
+        checksum: file.checksum.clone(),
+        bytes: file.bytes,
+        created_at: now_rfc3339(),
     }
 }
 
-fn verify_local_file(remote: &RemoteFile, path: &Path) -> Result<Option<VerifiedFile>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let bytes = file_size(path)?;
-    if let Some(expected_bytes) = remote.bytes
-        && bytes != expected_bytes
-    {
-        return Ok(None);
-    }
+fn verified_snapshot(snapshot: &ManifestArtifact) -> Result<VerifiedFile> {
+    Ok(VerifiedFile {
+        artifact_kind: snapshot.kind.parse()?,
+        path: snapshot.path.clone().into(),
+        checksum_type: snapshot.checksum_type.clone(),
+        checksum: snapshot.checksum.clone(),
+        bytes: snapshot.bytes,
+        integrity_source: "verified_generation_sha256".into(),
+    })
+}
 
-    let (checksum_type, checksum, integrity_source) = if let Some(expected_md5) = &remote.md5 {
-        let actual_md5 = compute_md5(path)?;
-        if actual_md5 != *expected_md5 {
-            return Ok(None);
-        }
-        (
-            "md5".to_string(),
-            actual_md5,
-            "authoritative_md5".to_string(),
-        )
-    } else {
-        let sha256 = compute_sha256(path)?;
-        let integrity_source = if remote.bytes.is_some() {
-            "remote_size+local_sha256"
-        } else {
-            "local_sha256_only"
-        };
-        ("sha256".to_string(), sha256, integrity_source.to_string())
-    };
-
-    Ok(Some(VerifiedFile {
-        artifact_kind: match remote.kind {
-            RemoteFileKind::FastqR1 => ArtifactKind::FastqR1,
-            RemoteFileKind::FastqR2 => ArtifactKind::FastqR2,
-            RemoteFileKind::Fastq => ArtifactKind::FastqSingle,
-            RemoteFileKind::Sra | RemoteFileKind::Submitted => ArtifactKind::Sra,
-        },
-        path: path.to_path_buf(),
-        checksum_type,
-        checksum,
-        bytes,
-        integrity_source,
-    }))
+fn complete_download(db: &Database, run: &str, files: &[VerifiedFile], reused: bool) -> Result<()> {
+    db.set_run_state(run, RunState::Verified, None)?;
+    db.append_event(
+        "download",
+        Some(run),
+        "download verified",
+        json!({"files":files.len(),
+        "bytes":files.iter().map(|file| file.bytes).sum::<u64>(), "reused":reused}),
+    )
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use rnaa_core::LibraryLayout;
-    use rnaa_core::config::ProjectConfig;
-
-    #[test]
-    fn remote_selection_prefers_fastq() {
-        let run = RunRecord {
-            project_id: "p".to_string(),
-            study_accession: "SRP1".to_string(),
-            source_study_accession: None,
-            run_accession: "SRR1".to_string(),
-            sample_accession: None,
-            experiment_accession: None,
-            library_layout: LibraryLayout::Paired,
-            instrument_platform: None,
-            instrument_model: None,
-            remote_files: vec![
-                RemoteFile {
-                    url: "https://example.com/a_1.fastq.gz".to_string(),
-                    md5: None,
-                    bytes: None,
-                    kind: RemoteFileKind::FastqR1,
-                    basename: "a_1.fastq.gz".to_string(),
-                },
-                RemoteFile {
-                    url: "https://example.com/a_2.fastq.gz".to_string(),
-                    md5: None,
-                    bytes: None,
-                    kind: RemoteFileKind::FastqR2,
-                    basename: "a_2.fastq.gz".to_string(),
-                },
-                RemoteFile {
-                    url: "https://example.com/a.sra".to_string(),
-                    md5: None,
-                    bytes: None,
-                    kind: RemoteFileKind::Sra,
-                    basename: "a.sra".to_string(),
-                },
-            ],
-            metadata: BTreeMap::new(),
-            state: RunState::Resolved,
-            last_error: None,
-            updated_at: now_rfc3339(),
-        };
-        let selected = ShellDownloader.select_remote_files(&run, DownloadPreference::Fastq);
-        assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0].kind, RemoteFileKind::FastqR1);
-    }
-
-    #[test]
-    fn config_accepts_legacy_download_methods_as_reqwest() {
-        let config: ProjectConfig = toml::from_str(
-            r#"
-            [project]
-            name = "test"
-            schema_version = 1
-
-            [download]
-            method = "curl"
-            "#,
-        )
-        .expect("config should parse");
-        assert_eq!(config.download.method, DownloadMethod::Reqwest);
-    }
-}
+mod tests;

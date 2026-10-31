@@ -1,5 +1,10 @@
+use rnaa_core::traits::ReferenceManager;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
+
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -36,114 +41,29 @@ fn run_ok(args: &[&str], extra_path: Option<&Path>) {
     );
 }
 
-fn make_mock_rscript(bin_dir: &Path) {
-    let script = r#"#!/usr/bin/env bash
-set -euo pipefail
-
-mode=""
-outdir=""
-manifest=""
-run_id=""
-reference_manifest=""
-
-for arg in "$@"; do
-  case "$arg" in
-    *quant_kallisto.R) mode="quant" ;;
-    *tximport_deseq2.R) mode="deseq2" ;;
-  esac
-done
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --outdir) outdir="$2"; shift 2 ;;
-    --manifest-out) manifest="$2"; shift 2 ;;
-    --run) run_id="$2"; shift 2 ;;
-    --reference-manifest) reference_manifest="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-
-mkdir -p "$outdir"
-
-if [[ "$mode" == "quant" ]]; then
-  printf 'mock-h5' > "$outdir/abundance.h5"
-  cat > "$outdir/run_info.json" <<EOF
-{"run":"$run_id"}
-EOF
-  if [[ -n "${manifest}" ]]; then
-    mkdir -p "$(dirname "$manifest")"
-    cat > "$manifest" <<EOF
-{"schema_version":1,"stage":"quant","parameters":{"reference_manifest":"$reference_manifest"}}
-EOF
-  fi
-  exit 0
-fi
-
-cat > "$outdir/gene_counts.tsv" <<'EOF'
-gene_id	RUN1	RUN2
-G1	100	120
-G2	50	60
-EOF
-cat > "$outdir/gene_counts_annotated.tsv" <<'EOF'
-gene_id	gene_symbol	gene_biotype	RUN1	RUN2
-G1	Gene1	protein_coding	100	120
-G2	Gene2	protein_coding	50	60
-EOF
-cat > "$outdir/gene_norm_counts.tsv" <<'EOF'
-gene_id	RUN1	RUN2
-G1	10	12
-G2	5	6
-EOF
-cat > "$outdir/gene_norm_counts_annotated.tsv" <<'EOF'
-gene_id	gene_symbol	gene_biotype	RUN1	RUN2
-G1	Gene1	protein_coding	10	12
-G2	Gene2	protein_coding	5	6
-EOF
-cat > "$outdir/vst.tsv" <<'EOF'
-gene_id	RUN1	RUN2
-G1	2.1	2.4
-G2	1.5	1.7
-EOF
-cat > "$outdir/vst_annotated.tsv" <<'EOF'
-gene_id	gene_symbol	gene_biotype	RUN1	RUN2
-G1	Gene1	protein_coding	2.1	2.4
-G2	Gene2	protein_coding	1.5	1.7
-EOF
-printf 'placeholder' > "$outdir/vst.rds"
-cat > "$outdir/size_factors.tsv" <<'EOF'
-run_accession	size_factor
-RUN1	1.0
-RUN2	1.0
-EOF
-if [[ -n "${manifest}" ]]; then
-  mkdir -p "$(dirname "$manifest")"
-  cat > "$manifest" <<'EOF'
-{"schema_version":1,"stage":"deseq2"}
-EOF
-fi
-"#;
-    let path = bin_dir.join("Rscript");
-    fs::write(&path, script).expect("failed to write mock Rscript");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&path)
-            .expect("failed to stat mock Rscript")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).expect("failed to chmod mock Rscript");
-    }
+fn write_gzip(path: &Path, contents: &[u8]) {
+    let file = fs::File::create(path).expect("failed to create gzip fixture");
+    let mut encoder = GzEncoder::new(file, Compression::default());
+    encoder
+        .write_all(contents)
+        .expect("failed to write gzip fixture");
+    encoder.finish().expect("failed to finish gzip fixture");
 }
 
 fn write_minimal_inputs(root: &Path) -> (PathBuf, PathBuf) {
     let cdna = root.join("test.cdna.fa.gz");
     let gtf = root.join("test.gtf.gz");
-    fs::write(&cdna, b">tx1\nACGTACGTACGT\n>tx2\nTTTTAACCGG\n").expect("failed to write cdna");
-    fs::write(
-        &gtf,
-        b"chr1\tsrc\tgene\t1\t100\t.\t+\t.\tgene_id \"G1\"; gene_name \"Gene1\"; gene_biotype \"protein_coding\"; transcript_id \"tx1\";\nchr1\tsrc\tgene\t101\t200\t.\t+\t.\tgene_id \"G2\"; gene_name \"Gene2\"; gene_biotype \"protein_coding\"; transcript_id \"tx2\";\n",
-    )
-    .expect("failed to write gtf");
+    write_gzip(
+        &cdna,
+        br#">tx1
+ACGTACGTACGT
+>tx2
+TTTTAACCGG
+"#,
+    );
+    write_gzip(&gtf, br#"chr1	src	transcript	1	100	.	+	.	gene_id "G1"; gene_name "Gene1"; gene_biotype "protein_coding"; transcript_id "tx1";
+chr1	src	transcript	101	200	.	+	.	gene_id "G2"; gene_name "Gene2"; gene_biotype "protein_coding"; transcript_id "tx2";
+"#);
     (cdna, gtf)
 }
 
@@ -203,10 +123,15 @@ fn record_quant_artifacts(
     project_id: &str,
     run_accession: &str,
 ) {
-    let quant_dir = paths.quant_run_dir(run_accession, "r-kallisto");
+    let quant_dir = paths.quant_run_dir(run_accession, "kallistors");
     fs::create_dir_all(&quant_dir).expect("failed to create quant dir");
     let abundance_h5 = quant_dir.join("abundance.h5");
     let run_info_json = quant_dir.join("run_info.json");
+    fs::write(
+        quant_dir.join("abundance.tsv"),
+        "target_id\tlength\teff_length\test_counts\ttpm\ntx1\t12\t10\t100\t400000\ntx2\t10\t8\t120\t600000\n",
+    )
+    .expect("failed to write abundance.tsv");
     fs::write(&abundance_h5, b"mock-h5").expect("failed to write abundance.h5");
     fs::write(&run_info_json, b"{\"run\":\"ok\"}").expect("failed to write run_info.json");
     db.record_artifact(&ArtifactRecord {
@@ -235,19 +160,27 @@ fn record_quant_artifacts(
         created_at: now_rfc3339(),
     })
     .expect("failed to record run info artifact");
+    let config = ProjectConfig::load(&paths.config_path).unwrap();
+    let reference = rnaa_stages::refs::EnsemblReferenceManager::new()
+        .unwrap()
+        .ensure_reference(paths, db, &config)
+        .unwrap();
+    rnaa_stages::quant::declare_external_quant(
+        run_accession,
+        &quant_dir,
+        &reference,
+        "external restart statistical fixture",
+    )
+    .unwrap();
 }
 
 #[test]
 fn quant_restart_recovers_preprocess_and_completes() {
     let temp = TempDir::new().expect("failed to create tempdir");
     let root = temp.path();
-    let bin_dir = root.join("mock_bin");
-    fs::create_dir_all(&bin_dir).expect("failed to create mock bin dir");
-    make_mock_rscript(&bin_dir);
-
     run_ok(
         &["init", "--root", root.to_str().expect("invalid root path")],
-        Some(&bin_dir),
+        None,
     );
 
     let (paths, db, project_id) = setup_custom_reference(root);
@@ -256,8 +189,10 @@ fn quant_restart_recovers_preprocess_and_completes() {
     let raw2 = paths.raw_run_dir("RUN2").join("RUN2.fastq");
     fs::create_dir_all(raw1.parent().expect("missing parent")).expect("failed to create raw dir");
     fs::create_dir_all(raw2.parent().expect("missing parent")).expect("failed to create raw dir");
-    fs::write(&raw1, b"@r1\nACGT\n+\n!!!!\n").expect("failed to write fastq");
-    fs::write(&raw2, b"@r2\nTGCA\n+\n!!!!\n").expect("failed to write fastq");
+    let sequence = "ACGTTCGATCGGATCGATCGATCGATGCTAGCTAGCATCGATCGTAGCTAGCTAGCTGACTGATCGATCGTAGCTAGCTGATCGTAGCTAGCTAGCATCGA";
+    let read = format!("@read\n{sequence}\n+\n{}\n", "I".repeat(sequence.len()));
+    fs::write(&raw1, &read).expect("failed to write fastq");
+    fs::write(&raw2, &read).expect("failed to write fastq");
 
     db.record_artifact(&record_raw_fastq(&project_id, "RUN1", &raw1))
         .expect("failed to record raw fastq");
@@ -300,6 +235,21 @@ fn quant_restart_recovers_preprocess_and_completes() {
     ];
     db.upsert_runs(&runs).expect("failed to upsert runs");
 
+    // A separate downloader may own another run while this CLI invocation
+    // recovers an actual orphan and quantifies the ready runs.
+    let mut downloading = runs[1].clone();
+    downloading.run_accession = "LIVE_DOWNLOAD".into();
+    downloading.state = RunState::Resolved;
+    db.upsert_run(&downloading).unwrap();
+    let mut foreign_download = rnaa_core::jobs::JobLease::try_acquire(
+        &db,
+        "download",
+        Some("LIVE_DOWNLOAD"),
+        &[RunState::Resolved],
+    )
+    .unwrap()
+    .unwrap();
+
     let output = run_cmd(
         &[
             "quant",
@@ -310,7 +260,7 @@ fn quant_restart_recovers_preprocess_and_completes() {
             "--workers",
             "1",
         ],
-        Some(&bin_dir),
+        None,
     );
     assert!(
         output.status.success(),
@@ -322,7 +272,9 @@ fn quant_restart_recovers_preprocess_and_completes() {
     let reopened = Database::open(root).expect("failed to reopen db");
     let runs = reopened.list_runs().expect("failed to list runs");
     assert!(
-        runs.iter().all(|run| run.state == RunState::QuantDone),
+        runs.iter()
+            .filter(|run| run.run_accession != "LIVE_DOWNLOAD")
+            .all(|run| run.state == RunState::QuantDone),
         "unexpected run states: {:?}\nstdout:\n{}\nstderr:\n{}",
         runs.iter()
             .map(|run| (
@@ -336,7 +288,9 @@ fn quant_restart_recovers_preprocess_and_completes() {
     );
     assert!(
         paths
-            .quant_run_dir("RUN1", "r-kallisto")
+            .with_generation_heads(&db)
+            .unwrap()
+            .quant_run_dir("RUN1", "kallistors")
             .join("abundance.h5")
             .exists()
     );
@@ -347,19 +301,32 @@ fn quant_restart_recovers_preprocess_and_completes() {
             .iter()
             .any(|event| event.stage == "recovery" && event.message == "interrupted work recovered")
     );
+    assert_eq!(
+        reopened.get_run("LIVE_DOWNLOAD").unwrap().unwrap().state,
+        RunState::Downloading
+    );
+    assert_eq!(
+        reopened
+            .list_job_attempts(100)
+            .unwrap()
+            .iter()
+            .find(|job| job.attempt_id == foreign_download.attempt_id())
+            .unwrap()
+            .state,
+        "RUNNING"
+    );
+    foreign_download
+        .finish(rnaa_core::jobs::JobOutcome::Failed, Some("test complete"))
+        .unwrap();
 }
 
 #[test]
-fn normalize_and_corr_restart_recover_project_stages() {
+fn normalize_restart_recovers_progress_then_rejects_confounded_design() {
     let temp = TempDir::new().expect("failed to create tempdir");
     let root = temp.path();
-    let bin_dir = root.join("mock_bin");
-    fs::create_dir_all(&bin_dir).expect("failed to create mock bin dir");
-    make_mock_rscript(&bin_dir);
-
     run_ok(
         &["init", "--root", root.to_str().expect("invalid root path")],
-        Some(&bin_dir),
+        None,
     );
 
     let (paths, db, project_id) = setup_custom_reference(root);
@@ -376,8 +343,17 @@ fn normalize_and_corr_restart_recover_project_stages() {
             instrument_platform: Some("ILLUMINA".to_string()),
             instrument_model: Some("TEST".to_string()),
             remote_files: Vec::new(),
-            metadata: BTreeMap::new(),
-            state: RunState::DeRunning,
+            metadata: BTreeMap::from([
+                (
+                    "condition".to_string(),
+                    if run == "RUN1" { "A" } else { "B" }.to_string(),
+                ),
+                (
+                    "batch".to_string(),
+                    if run == "RUN1" { "B1" } else { "B2" }.to_string(),
+                ),
+            ]),
+            state: RunState::QuantDone,
             last_error: None,
             updated_at: now_rfc3339(),
         })
@@ -393,7 +369,7 @@ fn normalize_and_corr_restart_recover_project_stages() {
                       test\tSRPTEST\tRUN2\tB\tB2\n";
     fs::write(paths.samplesheet_path(), samplesheet).expect("failed to write samplesheet");
 
-    run_ok(
+    let output = run_cmd(
         &[
             "normalize",
             "--root",
@@ -401,63 +377,234 @@ fn normalize_and_corr_restart_recover_project_stages() {
             "--design",
             "~ batch + condition",
         ],
-        Some(&bin_dir),
+        None,
     );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("rank deficient"));
 
     let reopened = Database::open(root).expect("failed to reopen db");
     let normalize_stage = reopened
         .get_project_stage_state("normalize")
         .expect("failed to load normalize stage")
         .expect("normalize stage missing");
-    assert_eq!(normalize_stage.state, ProjectStageState::Done);
+    assert_eq!(normalize_stage.state, ProjectStageState::Failed);
+    assert!(
+        normalize_stage
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("rank deficient")
+    );
     assert!(
         reopened
             .list_runs()
             .expect("failed to list runs")
             .iter()
-            .all(|run| run.state == RunState::DeDone)
+            .all(|run| run.state == RunState::QuantDone)
     );
-
-    for run in reopened.list_runs().expect("failed to list runs") {
+    assert!(
         reopened
-            .set_run_state(&run.run_accession, RunState::CorrRunning, None)
-            .expect("failed to set corr state");
-    }
-    reopened
-        .set_project_stage_state("corr", ProjectStageState::Running, None)
-        .expect("failed to set corr stage");
-
-    run_ok(
-        &[
-            "corr",
-            "--root",
-            root.to_str().expect("invalid root path"),
-            "--model",
-            "~ batch + condition",
-            "--method",
-            "pearson",
-        ],
-        Some(&bin_dir),
-    );
-
-    let final_db = Database::open(root).expect("failed to reopen final db");
-    let corr_stage = final_db
-        .get_project_stage_state("corr")
-        .expect("failed to load corr stage")
-        .expect("corr stage missing");
-    assert_eq!(corr_stage.state, ProjectStageState::Done);
-    assert!(
-        final_db
-            .list_runs()
-            .expect("failed to list runs")
-            .iter()
-            .all(|run| run.state == RunState::CorrDone)
-    );
-    assert!(
-        final_db
             .list_events(200)
             .expect("failed to list events")
             .iter()
             .any(|event| event.stage == "recovery" && event.message == "interrupted work recovered")
     );
+}
+
+#[test]
+fn shared_snapshot_survives_requantification_and_preprocess_respects_budget() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let root_str = root.to_str().unwrap();
+    run_ok(&["init", "--root", root_str], None);
+    let (paths, db, project_id) = setup_custom_reference(root);
+    let mut config = ProjectConfig::load(&paths.config_path).unwrap();
+    config.storage.shared_root = root.join("shared").display().to_string();
+    config.save(&paths.config_path).unwrap();
+    let raw = paths.raw_run_dir("RUN1").join("RUN1.fastq");
+    fs::create_dir_all(raw.parent().unwrap()).unwrap();
+    let sequence = "ACGTTCGATCGGATCGATCGATCGATGCTAGCTAGCATCGATCGTAGCTAGCTAGCTGACTGATCGATCGTAGCTAGCTGATCGTAGCTAGCTAGCATCGA";
+    let read = format!("@r1\n{sequence}\n+\n{}\n", "I".repeat(sequence.len()));
+    fs::write(&raw, &read).unwrap();
+    db.record_artifact(&record_raw_fastq(&project_id, "RUN1", &raw))
+        .unwrap();
+    db.upsert_run(&RunRecord {
+        project_id: project_id.clone(),
+        study_accession: "SRPTEST".into(),
+        source_study_accession: None,
+        run_accession: "RUN1".into(),
+        sample_accession: Some("SAMP1".into()),
+        experiment_accession: None,
+        library_layout: LibraryLayout::Single,
+        instrument_platform: None,
+        instrument_model: None,
+        remote_files: Vec::new(),
+        metadata: BTreeMap::new(),
+        state: RunState::Verified,
+        last_error: None,
+        updated_at: now_rfc3339(),
+    })
+    .unwrap();
+    run_ok(&["quant", "--root", root_str, "--worker-budget", "1"], None);
+    let info: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            paths
+                .with_generation_heads(&db)
+                .unwrap()
+                .quant_run_dir("RUN1", "kallistors")
+                .join("run_info.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(info["n_processed"], 1);
+    let original = db
+        .list_artifacts_for_run(Some("RUN1"))
+        .unwrap()
+        .into_iter()
+        .find(|a| a.kind == ArtifactKind::QuantAbundanceH5)
+        .unwrap();
+    let shared = PathBuf::from(original.shared_path.unwrap());
+    let old_checksum = compute_sha256(&shared).unwrap();
+    let extra = paths.raw_run_dir("RUN1").join("extra.fastq");
+    fs::write(&extra, read.repeat(2)).unwrap();
+    db.record_artifact(&record_raw_fastq(&project_id, "RUN1", &extra))
+        .unwrap();
+    run_ok(&["quant", "--root", root_str, "--worker-budget", "1"], None);
+    let info: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            paths
+                .with_generation_heads(&db)
+                .unwrap()
+                .quant_run_dir("RUN1", "kallistors")
+                .join("run_info.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        info["n_processed"], 3,
+        "newly registered FASTQ must invalidate the completed request"
+    );
+    let manifest_path = paths
+        .with_generation_heads(&db)
+        .unwrap()
+        .quant_run_dir("RUN1", "kallistors")
+        .join("rnaa_quant_manifest.json");
+    let saved_generation = compute_sha256(&manifest_path).unwrap();
+    run_ok(
+        &[
+            "quant",
+            "--root",
+            root_str,
+            "--worker-budget",
+            "1",
+            "--threads",
+            "2",
+        ],
+        None,
+    );
+    assert_eq!(
+        compute_sha256(&manifest_path).unwrap(),
+        saved_generation,
+        "CPU-only changes must reuse scientific outputs"
+    );
+    fs::write(&raw, read.repeat(3)).unwrap();
+    db.record_artifact(&record_raw_fastq(&project_id, "RUN1", &raw))
+        .unwrap();
+    run_ok(&["quant", "--root", root_str, "--worker-budget", "1"], None);
+    assert_eq!(compute_sha256(&shared).unwrap(), old_checksum);
+    assert_ne!(
+        compute_sha256(
+            &paths
+                .with_generation_heads(&db)
+                .unwrap()
+                .quant_run_dir("RUN1", "kallistors")
+                .join("abundance.h5")
+        )
+        .unwrap(),
+        old_checksum
+    );
+    run_ok(
+        &[
+            "quant",
+            "--root",
+            root_str,
+            "--worker-budget",
+            "1",
+            "--preprocess",
+            "--preprocess-threads",
+            "16",
+        ],
+        None,
+    );
+    let report: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            paths
+                .with_generation_heads(&db)
+                .unwrap()
+                .preprocess_run_dir("RUN1", "kallistors")
+                .join("fasterp.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["threads"], 1);
+    let qc = db.get_preprocess_qc("RUN1").unwrap().unwrap();
+    assert_eq!(qc.total_reads_before, 5);
+    assert_eq!(compute_sha256(&shared).unwrap(), old_checksum);
+    // A changed QC policy must revisit eligibility even when trimmed outputs
+    // can be reused. Five good reads and one rejected read pass defaults.
+    let bad = format!("@bad\n{sequence}\n+\n{}\n", "!".repeat(sequence.len()));
+    fs::write(&raw, format!("{}{bad}", read.repeat(3))).unwrap();
+    db.record_artifact(&record_raw_fastq(&project_id, "RUN1", &raw))
+        .unwrap();
+    run_ok(&["quant", "--root", root_str, "--worker-budget", "1"], None);
+    let mut current = ProjectConfig::load(&paths.config_path).unwrap();
+    current.quant.qc_gate.min_pass_rate = Some(0.95);
+    current.save(&paths.config_path).unwrap();
+    let result = run_cmd(&["quant", "--root", root_str, "--worker-budget", "1"], None);
+    assert!(!result.status.success());
+    assert_eq!(
+        db.get_run("RUN1").unwrap().unwrap().state,
+        RunState::QuantDone
+    );
+    assert!(!db.get_preprocess_qc("RUN1").unwrap().unwrap().gate_passed);
+}
+
+#[test]
+fn missing_paired_mate_is_a_failed_command() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().to_str().unwrap();
+    run_ok(&["init", "--root", root], None);
+    let (paths, db, project_id) = setup_custom_reference(temp.path());
+    let raw = paths.raw_run_dir("RUN1").join("RUN1_1.fastq");
+    fs::create_dir_all(raw.parent().unwrap()).unwrap();
+    fs::write(&raw, "@read/1\nACGT\n+\nIIII\n").unwrap();
+    let mut artifact = record_raw_fastq(&project_id, "RUN1", &raw);
+    artifact.kind = ArtifactKind::FastqR1;
+    db.record_artifact(&artifact).unwrap();
+    db.upsert_run(&RunRecord {
+        project_id,
+        study_accession: "study".into(),
+        source_study_accession: None,
+        run_accession: "RUN1".into(),
+        sample_accession: None,
+        experiment_accession: None,
+        library_layout: LibraryLayout::Paired,
+        instrument_platform: None,
+        instrument_model: None,
+        remote_files: vec![],
+        metadata: BTreeMap::new(),
+        state: RunState::Verified,
+        last_error: None,
+        updated_at: now_rfc3339(),
+    })
+    .unwrap();
+    let result = run_cmd(&["quant", "--root", root, "--worker-budget", "1"], None);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stdout).contains("quant_failed\t1"));
+    let run = db.get_run("RUN1").unwrap().unwrap();
+    assert_eq!(run.state, RunState::QuantFailed);
+    assert!(run.last_error.unwrap().contains("declared PAIRED layout"));
 }
