@@ -4,7 +4,7 @@ use std::{
     fs,
     io::Write,
     path::Path,
-    sync::{Arc, mpsc},
+    sync::{mpsc, Arc},
     time::Duration,
 };
 
@@ -209,26 +209,22 @@ fn invalid_options_and_incomplete_pair_arguments_fail_before_output_creation() -
     fs::write(&input, fastq(1, 40, false, 1))?;
     let mut bad = options(2);
     bad.max_in_flight_batches = 0;
-    assert!(
-        process_paths_with_options(
-            input.to_str().unwrap(),
-            output.to_str().unwrap(),
-            None,
-            None,
-            bad
-        )
-        .is_err()
-    );
-    assert!(
-        process_paths_with_options(
-            input.to_str().unwrap(),
-            output.to_str().unwrap(),
-            Some(input.to_str().unwrap()),
-            None,
-            options(2)
-        )
-        .is_err()
-    );
+    assert!(process_paths_with_options(
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+        None,
+        None,
+        bad
+    )
+    .is_err());
+    assert!(process_paths_with_options(
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+        Some(input.to_str().unwrap()),
+        None,
+        options(2)
+    )
+    .is_err());
     assert!(!output.exists());
     Ok(())
 }
@@ -320,41 +316,35 @@ fn native_error_child() -> Result<()> {
     let root = Path::new(&root);
     let input = root.join("input.fastq");
     fs::write(&input, fastq(1000, 100, false, 1))?;
-    assert!(
-        process_paths_with_options(
-            input.to_str().unwrap(),
-            root.to_str().unwrap(),
-            None,
-            None,
-            options(3)
-        )
-        .is_err()
-    );
+    assert!(process_paths_with_options(
+        input.to_str().unwrap(),
+        root.to_str().unwrap(),
+        None,
+        None,
+        options(3)
+    )
+    .is_err());
     let bad = root.join("bad.fastq");
     fs::write(&bad, "@broken\nACGT\n+\nI\n")?;
-    assert!(
-        process_paths_with_options(
-            bad.to_str().unwrap(),
-            root.join("bad-output").to_str().unwrap(),
-            None,
-            None,
-            options(3)
-        )
-        .is_err()
-    );
+    assert!(process_paths_with_options(
+        bad.to_str().unwrap(),
+        root.join("bad-output").to_str().unwrap(),
+        None,
+        None,
+        options(3)
+    )
+    .is_err());
     for threads in [1, 3] {
         let mut opts = options(threads);
         opts.max_record_bytes = 64;
-        assert!(
-            process_paths_with_options(
-                input.to_str().unwrap(),
-                root.join("limited-output").to_str().unwrap(),
-                None,
-                None,
-                opts
-            )
-            .is_err()
-        );
+        assert!(process_paths_with_options(
+            input.to_str().unwrap(),
+            root.join("limited-output").to_str().unwrap(),
+            None,
+            None,
+            opts
+        )
+        .is_err());
     }
     Ok(())
 }

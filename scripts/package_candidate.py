@@ -61,6 +61,7 @@ VALIDATION_GUIDES = {
     "validation/correlation-scale/2026-10-31-network-cancellation-debug.json",
     "validation/correlation-scale/2026-10-31-selection.json",
     "validation/dependencies/2026-10-31-release-wrap.json",
+    "validation/dependencies/2026-11-04-0.3.1.json",
     "validation/checks/2026-10-31-release-wrap.json",
     "validation/real-data-smoke/2026-10-31-yeast-release.md",
     "validation/real-data-smoke/2026-10-31-yeast-release.json",
@@ -222,7 +223,7 @@ def main():
               "runtime_requirements": runtime,
               "distribution_approved": False,
               "deferred_work": ["mincorr licensing review (deferred by user)",
-                                "DESeq2 replacement (current rsdeseq2 unchanged)"],
+                                "Production-scale scientific and operational qualification remains incomplete"],
               "public_release_blockers": ["Verify platform and installation evidence for this exact source snapshot",
                                           "Verify a clean final commit and approve publication"],
               "components_without_root_license_files": [f'{p["name"]} {p["version"]}'

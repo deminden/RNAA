@@ -26,7 +26,7 @@ fn doctor_is_read_only_and_reports_project_errors_as_json() {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["ok"], true);
     assert!(report["project_id"].as_str().is_some());
-    assert_eq!(report["engines"]["rsdeseq2"], "0.3.1");
+    assert_eq!(report["engines"]["rsdeseq2"], "0.4.0");
     assert_eq!(fs::read(root.join("rnaa.toml")).unwrap(), before);
 
     fs::remove_file(root.join("rnaa.toml")).unwrap();

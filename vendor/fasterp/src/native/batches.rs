@@ -1,6 +1,6 @@
-use super::{NativeProcessOptions, window::BatchWindow};
+use super::{window::BatchWindow, NativeProcessOptions};
 use crate::pipeline::{Batch, PairedBatch};
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use crossbeam_channel::Sender;
 use std::{
     io::{BufRead, Read},

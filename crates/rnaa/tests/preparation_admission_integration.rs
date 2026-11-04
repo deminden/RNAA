@@ -164,7 +164,11 @@ fn preprocessing_decoded_cap_is_aggregate_and_successful_outputs_survive_resourc
         .unwrap(),
     )
     .unwrap();
-    assert_eq!(manifest["parameters"]["algorithm_version"], 3);
+    assert_eq!(manifest["parameters"]["algorithm_version"], 4);
+    assert_eq!(
+        manifest["parameters"]["engine_version"],
+        "0.2.1+git.dcca6ad25e23"
+    );
     let heads = db.generation_heads().unwrap();
     config = ProjectConfig::load(&paths.config_path).unwrap();
     config.quant.preprocess_max_input_mb = 1;

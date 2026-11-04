@@ -1,9 +1,26 @@
 # Changelog
 
-## 0.3.0 — unreleased
+## 0.3.1 — unreleased
 
-This release consolidates the current development work. It has not been tagged
-or published. It includes incompatible catalog and CLI changes since 0.2.1. See the gates in [the release guide](docs/releasing.md).
+- Update `rsdeseq2` from 0.3.1 to 0.4.0, including upstream model and numerical
+  corrections. Independent pinned R-reference tests remain the acceptance gate.
+- Integrate `fasterp` GitHub main revision `dcca6ad25e238ecfb4c2372ae5d4c83b6cc68281`
+  (upstream package version 0.2.1), preserving RNAA's bounded native API. RNAA
+  continues to use its bounded native path; upstream's newer compatibility engine
+  is available in the vendor library but is not silently substituted for it.
+- Bump preprocessing request and processing identity to revision 4. Earlier
+  preprocessing results cannot be mistaken for outputs from the updated engine.
+  Reprocessing may require recoverable original inputs; retained historical
+  results are preserved. Dependency lock changes also affect cache identities.
+- Update direct registry dependencies and compatible lockfile selections; see the
+  [dependency audit](validation/dependencies/2026-11-04-0.3.1.json).
+- Add upstream compatibility and WebAssembly checks to CI, alongside independent
+  scientific references and bounded processing regression tests.
+
+## 0.3.0 — 2026-10-31
+
+This release consolidated the development work since 0.2.1, including incompatible
+catalog and CLI changes. See the gates in [the release guide](docs/releasing.md).
 
 ### Added
 

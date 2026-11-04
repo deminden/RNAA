@@ -48,6 +48,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2.9.3
@@ -70,7 +71,10 @@ jobs:
         run: cargo test --workspace --all-features --locked
 
       - name: Vendored preprocessing library tests
-        run: cargo test --manifest-path vendor/fasterp/Cargo.toml --lib --locked
+        run: cargo test --manifest-path vendor/fasterp/Cargo.toml --lib --test compatibility_v140 --locked
+
+      - name: Vendored preprocessing WebAssembly check
+        run: cargo check --manifest-path vendor/fasterp/Cargo.toml --lib --target wasm32-unknown-unknown --no-default-features --features wasm --locked
 
       - name: Package verifier tests
         run: python3 -m unittest discover -s scripts/tests

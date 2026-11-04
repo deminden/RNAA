@@ -76,7 +76,7 @@ pub(crate) struct DetailedReadStats {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Summary {
-    pub fastp_version: String,
+    pub fasterp_version: String,
     pub sequencing: String,
     pub before_filtering: ReadStats,
     pub after_filtering: ReadStats,
@@ -282,12 +282,16 @@ impl PositionStats {
                 hist.insert(q as u8, count);
             }
         }
-        if hist.is_empty() { None } else { Some(hist) }
+        if hist.is_empty() {
+            None
+        } else {
+            Some(hist)
+        }
     }
 }
 
 /// Simple stats accumulator
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct SimpleStats {
     pub total_reads: usize,
     pub total_bases: usize,

@@ -6,12 +6,12 @@ RNAA is an RNA-seq survey pipeline for public cohorts. It resolves ENA accession
 
 ## Version
 
-Current workspace version: `0.3.0`.
+Current workspace version: `0.3.1` (unreleased).
 
-The current development tree is being prepared for the **0.3.0 release**. See the
+The current development tree is being prepared for **0.3.1**. See the
 [changelog](CHANGELOG.md), [release gates and upgrade guide](docs/releasing.md),
-and [offline installation example](examples/README.md). Public release gates remain
-open; the deferred DESeq2 replacement is not included.
+and [offline installation example](examples/README.md). Public release gates remain open. The current differential-expression engine is
+`rsdeseq2 0.4.0`; see the changelog for compatibility and validation scope.
 
 ## Capabilities
 
@@ -617,11 +617,9 @@ cargo test --workspace --all-features
 
 The workspace currently includes a vendored `fasterp` patch to keep the documented clippy gate passing under the workspace settings.
 
-Direct dependency versions were checked against stable crates.io releases on 2026-10-31,
+Direct dependency versions were checked against stable crates.io releases on 2026-11-04,
 including the vendored preprocessing library's optional and development dependencies.
-The audit is recorded in [validation/dependencies/2026-10-31-release-wrap.json](validation/dependencies/2026-10-31-release-wrap.json).
-That record predates the workspace version change to 0.3.0; dependency selections
-are unchanged, but its recorded root lockfile hash identifies the earlier snapshot.
+The audit is recorded in [validation/dependencies/2026-11-04-0.3.1.json](validation/dependencies/2026-11-04-0.3.1.json).
 Run it again with Python 3.11+:
 
 ```sh

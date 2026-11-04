@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod engine_upgrade_tests;
 mod native;
 mod resources;
 use std::collections::BTreeMap;
@@ -41,7 +43,7 @@ pub fn request_from_inputs(
     Ok(StageRequest {
         schema_version: 1,
         stage: "preprocess".into(),
-        algorithm_version: 3,
+        algorithm_version: 4,
         engines: BTreeMap::from([
             ("fasterp".into(), fasterp_version()),
             (
@@ -67,7 +69,7 @@ fn snapshot_inputs(inputs: &[VerifiedFile]) -> Result<Vec<ManifestArtifact>> {
 }
 
 fn scientific_parameters(run: &RunRecord) -> serde_json::Value {
-    serde_json::json!({"algorithm_version":3, "layout":run.library_layout, "engine_version":fasterp_version(),
+    serde_json::json!({"algorithm_version":4, "layout":run.library_layout, "engine_version":fasterp_version(),
         "dependency_lock":crate::engines::DEPENDENCY_LOCK_SHA256})
 }
 

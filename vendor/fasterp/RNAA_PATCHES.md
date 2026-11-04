@@ -1,52 +1,32 @@
-# RNAA maintenance of fasterp 0.2.1
+# RNAA maintenance of fasterp
 
-RNAA uses this vendored copy through the root Cargo patch. Upstream remains at
-0.2.1. Keep Cargo.toml and Cargo.toml.orig dependency requirements synchronized;
-Cargo.toml is the build manifest. Cargo.lock here governs standalone vendor checks;
-the root Cargo.lock governs RNAA builds.
+This vendored source incorporates GitHub `drbh/fasterp` main revision
+`dcca6ad25e238ecfb4c2372ae5d4c83b6cc68281` (2026-11-02). Upstream's latest
+published crate remains 0.2.1; RNAA reports `0.2.1+git.dcca6ad25e23` so this
+unpublished source revision cannot be confused with the crates.io release.
+`LICENSE.fastp` preserves the upstream notice for its fastp-derived code.
 
-On 2026-10-31 the optional native S3 client was updated to aws-sdk-s3 1.157.0;
-both lockfiles also resolve aws-smithy-schema 1.1.2. S3 network integration needs
-separate live-service verification; the offline vendor tests do not cover it.
+RNAA maintains additional integration changes:
 
-Besides the existing workspace Clippy fixes, local changes include:
+- `src/native/` provides `process_paths_with_options` with explicit decoded-input,
+  record and in-flight batch limits. Paired reads remain record-balanced, CRLF is
+  normalized and gzip input handles concatenated members.
+- Scoped workers and batch credits bound queued and reordered input, join on errors,
+  and unblock on cancellation. The upstream-compatible CLI engine is included but
+  RNAA continues using its bounded native path rather than silently changing engines.
+- The newer `gzp` 2 and `ureq` 3 APIs, current stable dependency requirements and
+  Rust deflate backend are retained. HTTP input streams response bodies; the upstream
+  parallel libdeflate gzip encoder was adapted to `gzp` 2's writer type.
+- The upstream randomized overlap test uses the current `rand` API. Root and vendor
+  lockfiles are maintained separately and both must be checked after updates.
 
-- Stable dependency updates, including gzp 2 and ureq 3. Optional WebAssembly
-  dependencies were refreshed to js-sys 0.3.107 / wasm-bindgen 0.2.130 on 2026-10-30. The parallel compressor
-  now names its owned File writer and static lifetime; HTTP downloads use the
-  response-body reader and explicitly enable Rustls.
-- Multi-member gzip decoding on all native input paths. A single FASTQ file may
-  concatenate multiple gzip members, and all reads must reach preprocessing.
-- Local HTTP and parallel gzip round-trip tests for the migrated APIs. RNAA also
-  checks multi-member input through its actual preprocessing stage.
-- The normalized manifest keeps the pure Rust deflate backend used by RNAA. The
-  original upstream manifest's native zlib-ng setting remains historical context.
-- RNAA's native entrypoints live in `src/native/`. The compatible `process_paths`
-  API remains; `process_paths_with_options` accepts explicit batch, complete-record
-  and in-flight limits. A record-balanced paired reader replaces independently
-  queued mate chunks on this path. CRLF input is normalized.
-- A batch credit is acquired before allocation and follows queued input, workers
-  and out-of-order results until the ordered merger writes or drops the payload.
-  Scoped threads join on producer/writer errors and panic; cancellation wakes
-  blocked credit acquisition. Other upstream CLI/Python producers retain their
-  existing behavior. The one-thread native path has a complete-record read cap.
-- Six native tests cover serial/parallel output and QC parity, unequal mate lengths,
-  CRLF and gzip members, invalid options, reordered-result credits and bounded
-  failure shutdown. The standalone library suite now has 88 passing tests. RNAA
-  preprocessing request revision 3 invalidates older results for these input fixes.
-- Native options additionally enforce optional decoded byte/count and minimum
-  record promises. Both serial and parallel readers enforce them before accepting
-  excess input. Bounded readers return at record boundaries so short reads do not
-  repeatedly scan a whole decoder buffer. Two further tests exercise byte growth
-  and changed record shape; the standalone library suite now has 90 tests.
-
-Run standalone library checks without the upstream integration suite's external
-fastp binary/data requirements:
+Run the local vendor gates:
 
 ```sh
-cargo test --manifest-path vendor/fasterp/Cargo.toml --lib --locked
+cargo test --manifest-path vendor/fasterp/Cargo.toml --lib --test compatibility_v140 --locked
 cargo check --manifest-path vendor/fasterp/Cargo.toml --lib --target wasm32-unknown-unknown --no-default-features --features wasm --locked
 ```
 
-RNAA's full workspace verification is still required separately. Python 3.11+
-`scripts/check_dependencies.py` checks stable registry versions and both lockfiles.
+The upstream differential tests against an external fastp 1.4.0 executable require
+that exact external tool and are separate from the self-contained compatibility suite.
+Run the full RNAA workspace checks and independent scientific references as well.

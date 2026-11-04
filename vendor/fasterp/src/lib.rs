@@ -18,6 +18,8 @@ use pyo3::prelude::*;
 
 // Core modules - always available
 pub mod adapter;
+mod args;
+pub mod auto_adapter;
 pub mod bloom;
 pub mod dedup;
 pub mod kmer;
@@ -29,29 +31,39 @@ pub mod trimming;
 pub mod umi;
 pub mod util;
 
-// Native-only modules (require threading, file I/O, etc.)
-#[cfg(feature = "native")]
+// The fastp 1.4.0 compatible engine, shared by the CLI and WebAssembly.
+pub mod compat;
 pub mod html;
+pub mod split;
+
+// File, URL and S3 I/O natively; an in-memory file system otherwise.
 #[cfg(feature = "native")]
 pub mod io;
+#[cfg(not(feature = "native"))]
+#[path = "memio.rs"]
+pub mod io;
+
+// Native-only modules (require threading, file I/O, etc.)
+#[cfg(feature = "native")]
+pub mod gzip;
 #[cfg(feature = "native")]
 pub mod pipeline;
-#[cfg(feature = "native")]
-pub mod split;
+
+pub use args::Args;
 
 // WASM module
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
 pub fn version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+    format!("{}+git.dcca6ad25e23", env!("CARGO_PKG_VERSION"))
 }
 
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "native")]
 pub use native::{
-    NativeProcessOptions, NativeProcessResult, process_paths, process_paths_with_options,
+    process_paths, process_paths_with_options, NativeProcessOptions, NativeProcessResult,
 };
 
 #[cfg(feature = "python")]
@@ -267,7 +279,7 @@ pub fn process(
 
         let report = FasterpReport {
             summary: Summary {
-                fastp_version: env!("CARGO_PKG_VERSION").to_string(),
+                fasterp_version: env!("CARGO_PKG_VERSION").to_string(),
                 sequencing: format!(
                     "paired end ({} cycles + {} cycles)",
                     pe_acc.max_cycle_r1, pe_acc.max_cycle_r2
@@ -409,7 +421,7 @@ pub fn process(
 
         let report = FasterpReport {
             summary: Summary {
-                fastp_version: env!("CARGO_PKG_VERSION").to_string(),
+                fasterp_version: env!("CARGO_PKG_VERSION").to_string(),
                 sequencing: format!("single end ({} cycles)", acc.max_cycle),
                 before_filtering: before_stats.clone(),
                 after_filtering: after_stats.clone(),

@@ -1,0 +1,932 @@
+{
+  "checked_at_utc": "2026-11-04T20:47:17.011259+00:00",
+  "scope": "Direct registry dependencies, including vendored optional/dev dependencies; compatible transitive updates use cargo update.",
+  "lockfile_sha256": {
+    "Cargo.lock": "b34524ea4765985a456fe7915021defbc86b51c8183b5bd60c8f9e3d527461b3",
+    "vendor/fasterp/Cargo.lock": "7073c97d5f5eeb9bd4471e55887ede48a3cf45589bf6405d205fa388e855e9ce"
+  },
+  "registry_releases": {
+    "anyhow": {
+      "stable": "1.0.104",
+      "rust_version": "1.68",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/anyhow"
+    },
+    "assert_cmd": {
+      "stable": "2.2.2",
+      "rust_version": "1.85",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/assert_cmd"
+    },
+    "aws-config": {
+      "stable": "1.13.0",
+      "rust_version": "1.94.1",
+      "license": "Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/aws-config"
+    },
+    "aws-sdk-s3": {
+      "stable": "1.157.0",
+      "rust_version": "1.94.1",
+      "license": "Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/aws-sdk-s3"
+    },
+    "bytes": {
+      "stable": "1.12.1",
+      "rust_version": "1.57",
+      "license": "MIT",
+      "source": "https://crates.io/api/v1/crates/bytes"
+    },
+    "chrono": {
+      "stable": "0.4.45",
+      "rust_version": "1.62.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/chrono"
+    },
+    "clap": {
+      "stable": "4.6.7",
+      "rust_version": "1.85",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/clap"
+    },
+    "criterion": {
+      "stable": "0.8.2",
+      "rust_version": "1.86",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://crates.io/api/v1/crates/criterion"
+    },
+    "crossbeam-channel": {
+      "stable": "0.5.17",
+      "rust_version": "1.60",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/crossbeam-channel"
+    },
+    "csv": {
+      "stable": "1.4.0",
+      "rust_version": "1.73",
+      "license": "Unlicense/MIT",
+      "source": "https://crates.io/api/v1/crates/csv"
+    },
+    "fasterp": {
+      "stable": "0.2.1",
+      "rust_version": null,
+      "license": "MIT",
+      "source": "https://crates.io/api/v1/crates/fasterp"
+    },
+    "flate2": {
+      "stable": "1.1.10",
+      "rust_version": "1.67.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/flate2"
+    },
+    "gzp": {
+      "stable": "2.0.4",
+      "rust_version": null,
+      "license": "Unlicense/MIT",
+      "source": "https://crates.io/api/v1/crates/gzp"
+    },
+    "hex": {
+      "stable": "0.4.3",
+      "rust_version": null,
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/hex"
+    },
+    "indexmap": {
+      "stable": "2.14.2",
+      "rust_version": "1.85",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://crates.io/api/v1/crates/indexmap"
+    },
+    "js-sys": {
+      "stable": "0.3.107",
+      "rust_version": "1.81",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/js-sys"
+    },
+    "kallistors": {
+      "stable": "0.6.0",
+      "rust_version": "1.97",
+      "license": "MIT",
+      "source": "https://crates.io/api/v1/crates/kallistors"
+    },
+    "libc": {
+      "stable": "0.2.191",
+      "rust_version": "1.65",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/libc"
+    },
+    "libdeflater": {
+      "stable": "1.26.1",
+      "rust_version": null,
+      "license": "Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/libdeflater"
+    },
+    "md-5": {
+      "stable": "0.11.0",
+      "rust_version": "1.85",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/md-5"
+    },
+    "memchr": {
+      "stable": "2.8.3",
+      "rust_version": "1.61",
+      "license": "Unlicense OR MIT",
+      "source": "https://crates.io/api/v1/crates/memchr"
+    },
+    "nalgebra": {
+      "stable": "0.35.0",
+      "rust_version": "1.89.0",
+      "license": "Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/nalgebra"
+    },
+    "ndarray": {
+      "stable": "0.17.2",
+      "rust_version": "1.64",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/ndarray"
+    },
+    "num_cpus": {
+      "stable": "1.17.0",
+      "rust_version": null,
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/num_cpus"
+    },
+    "once_cell": {
+      "stable": "1.21.4",
+      "rust_version": "1.65",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/once_cell"
+    },
+    "predicates": {
+      "stable": "3.1.4",
+      "rust_version": "1.74",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/predicates"
+    },
+    "rand": {
+      "stable": "0.10.3",
+      "rust_version": "1.85",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/rand"
+    },
+    "rayon": {
+      "stable": "1.12.0",
+      "rust_version": "1.80",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/rayon"
+    },
+    "regex": {
+      "stable": "1.13.1",
+      "rust_version": "1.65",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/regex"
+    },
+    "reqwest": {
+      "stable": "0.13.5",
+      "rust_version": "1.85.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/reqwest"
+    },
+    "rsdeseq2": {
+      "stable": "0.4.0",
+      "rust_version": "1.97.1",
+      "license": "MIT AND BSD-3-Clause AND BSD-2-Clause-Views",
+      "source": "https://crates.io/api/v1/crates/rsdeseq2"
+    },
+    "rsfgsea": {
+      "stable": "0.4.0",
+      "rust_version": "1.97.1",
+      "license": "MIT",
+      "source": "https://crates.io/api/v1/crates/rsfgsea"
+    },
+    "rusqlite": {
+      "stable": "0.41.1",
+      "rust_version": "1.89.0",
+      "license": "MIT",
+      "source": "https://crates.io/api/v1/crates/rusqlite"
+    },
+    "rustc-hash": {
+      "stable": "2.1.3",
+      "rust_version": "1.77",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://crates.io/api/v1/crates/rustc-hash"
+    },
+    "serde": {
+      "stable": "1.0.229",
+      "rust_version": "1.56",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/serde"
+    },
+    "serde_json": {
+      "stable": "1.0.154",
+      "rust_version": "1.71",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/serde_json"
+    },
+    "sha2": {
+      "stable": "0.11.1",
+      "rust_version": "1.88",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/sha2"
+    },
+    "tar": {
+      "stable": "0.4.46",
+      "rust_version": "1.63",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/tar"
+    },
+    "tempfile": {
+      "stable": "3.27.0",
+      "rust_version": "1.63",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/tempfile"
+    },
+    "thiserror": {
+      "stable": "2.0.21",
+      "rust_version": "1.77",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/thiserror"
+    },
+    "tokio": {
+      "stable": "1.54.1",
+      "rust_version": "1.85",
+      "license": "MIT",
+      "source": "https://crates.io/api/v1/crates/tokio"
+    },
+    "toml": {
+      "stable": "1.2.0+spec-1.1.0",
+      "rust_version": "1.85",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/toml"
+    },
+    "tracing": {
+      "stable": "0.1.44",
+      "rust_version": "1.65.0",
+      "license": "MIT",
+      "source": "https://crates.io/api/v1/crates/tracing"
+    },
+    "tracing-appender": {
+      "stable": "0.2.5",
+      "rust_version": "1.63.0",
+      "license": "MIT",
+      "source": "https://crates.io/api/v1/crates/tracing-appender"
+    },
+    "tracing-subscriber": {
+      "stable": "0.3.23",
+      "rust_version": "1.65.0",
+      "license": "MIT",
+      "source": "https://crates.io/api/v1/crates/tracing-subscriber"
+    },
+    "ureq": {
+      "stable": "3.5.1",
+      "rust_version": "1.85",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/ureq"
+    },
+    "url": {
+      "stable": "2.5.8",
+      "rust_version": "1.63",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/url"
+    },
+    "uuid": {
+      "stable": "1.29.0",
+      "rust_version": "1.89.0",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://crates.io/api/v1/crates/uuid"
+    },
+    "walkdir": {
+      "stable": "2.5.0",
+      "rust_version": null,
+      "license": "Unlicense/MIT",
+      "source": "https://crates.io/api/v1/crates/walkdir"
+    },
+    "wasm-bindgen": {
+      "stable": "0.2.130",
+      "rust_version": "1.81",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://crates.io/api/v1/crates/wasm-bindgen"
+    },
+    "zstd": {
+      "stable": "0.14.3",
+      "rust_version": "1.64",
+      "license": "BSD-3-Clause",
+      "source": "https://crates.io/api/v1/crates/zstd"
+    }
+  },
+  "dependencies": [
+    {
+      "name": "anyhow",
+      "manifest": "Cargo.toml",
+      "requirement": "1.0.104",
+      "locked": [
+        "1.0.104"
+      ],
+      "latest_stable": "1.0.104",
+      "current": true
+    },
+    {
+      "name": "chrono",
+      "manifest": "Cargo.toml",
+      "requirement": "0.4.45",
+      "locked": [
+        "0.4.45"
+      ],
+      "latest_stable": "0.4.45",
+      "current": true
+    },
+    {
+      "name": "clap",
+      "manifest": "Cargo.toml",
+      "requirement": "4.6.7",
+      "locked": [
+        "4.6.7"
+      ],
+      "latest_stable": "4.6.7",
+      "current": true
+    },
+    {
+      "name": "csv",
+      "manifest": "Cargo.toml",
+      "requirement": "1.4.0",
+      "locked": [
+        "1.4.0"
+      ],
+      "latest_stable": "1.4.0",
+      "current": true
+    },
+    {
+      "name": "fasterp",
+      "manifest": "Cargo.toml",
+      "requirement": "0.2.1",
+      "locked": [
+        "0.2.1"
+      ],
+      "latest_stable": "0.2.1",
+      "current": true
+    },
+    {
+      "name": "flate2",
+      "manifest": "Cargo.toml",
+      "requirement": "1.1.10",
+      "locked": [
+        "1.1.10"
+      ],
+      "latest_stable": "1.1.10",
+      "current": true
+    },
+    {
+      "name": "hex",
+      "manifest": "Cargo.toml",
+      "requirement": "0.4.3",
+      "locked": [
+        "0.4.3"
+      ],
+      "latest_stable": "0.4.3",
+      "current": true
+    },
+    {
+      "name": "kallistors",
+      "manifest": "Cargo.toml",
+      "requirement": "0.6.0",
+      "locked": [
+        "0.6.0"
+      ],
+      "latest_stable": "0.6.0",
+      "current": true
+    },
+    {
+      "name": "libc",
+      "manifest": "Cargo.toml",
+      "requirement": "0.2.191",
+      "locked": [
+        "0.2.191"
+      ],
+      "latest_stable": "0.2.191",
+      "current": true
+    },
+    {
+      "name": "md-5",
+      "manifest": "Cargo.toml",
+      "requirement": "0.11.0",
+      "locked": [
+        "0.11.0"
+      ],
+      "latest_stable": "0.11.0",
+      "current": true
+    },
+    {
+      "name": "rsdeseq2",
+      "manifest": "Cargo.toml",
+      "requirement": "0.4.0",
+      "locked": [
+        "0.4.0"
+      ],
+      "latest_stable": "0.4.0",
+      "current": true
+    },
+    {
+      "name": "rsfgsea",
+      "manifest": "Cargo.toml",
+      "requirement": "0.4.0",
+      "locked": [
+        "0.4.0"
+      ],
+      "latest_stable": "0.4.0",
+      "current": true
+    },
+    {
+      "name": "nalgebra",
+      "manifest": "Cargo.toml",
+      "requirement": "0.35.0",
+      "locked": [
+        "0.33.3",
+        "0.35.0"
+      ],
+      "latest_stable": "0.35.0",
+      "current": true
+    },
+    {
+      "name": "ndarray",
+      "manifest": "Cargo.toml",
+      "requirement": "0.17.2",
+      "locked": [
+        "0.17.2"
+      ],
+      "latest_stable": "0.17.2",
+      "current": true
+    },
+    {
+      "name": "num_cpus",
+      "manifest": "Cargo.toml",
+      "requirement": "1.17.0",
+      "locked": [
+        "1.17.0"
+      ],
+      "latest_stable": "1.17.0",
+      "current": true
+    },
+    {
+      "name": "once_cell",
+      "manifest": "Cargo.toml",
+      "requirement": "1.21.4",
+      "locked": [
+        "1.21.4"
+      ],
+      "latest_stable": "1.21.4",
+      "current": true
+    },
+    {
+      "name": "regex",
+      "manifest": "Cargo.toml",
+      "requirement": "1.13.1",
+      "locked": [
+        "1.13.1"
+      ],
+      "latest_stable": "1.13.1",
+      "current": true
+    },
+    {
+      "name": "rayon",
+      "manifest": "Cargo.toml",
+      "requirement": "1.12.0",
+      "locked": [
+        "1.12.0"
+      ],
+      "latest_stable": "1.12.0",
+      "current": true
+    },
+    {
+      "name": "reqwest",
+      "manifest": "Cargo.toml",
+      "requirement": "0.13.5",
+      "locked": [
+        "0.13.5"
+      ],
+      "latest_stable": "0.13.5",
+      "current": true
+    },
+    {
+      "name": "rusqlite",
+      "manifest": "Cargo.toml",
+      "requirement": "0.41.1",
+      "locked": [
+        "0.41.1"
+      ],
+      "latest_stable": "0.41.1",
+      "current": true
+    },
+    {
+      "name": "serde",
+      "manifest": "Cargo.toml",
+      "requirement": "1.0.229",
+      "locked": [
+        "1.0.229"
+      ],
+      "latest_stable": "1.0.229",
+      "current": true
+    },
+    {
+      "name": "serde_json",
+      "manifest": "Cargo.toml",
+      "requirement": "1.0.154",
+      "locked": [
+        "1.0.154"
+      ],
+      "latest_stable": "1.0.154",
+      "current": true
+    },
+    {
+      "name": "sha2",
+      "manifest": "Cargo.toml",
+      "requirement": "0.11.1",
+      "locked": [
+        "0.11.1"
+      ],
+      "latest_stable": "0.11.1",
+      "current": true
+    },
+    {
+      "name": "tar",
+      "manifest": "Cargo.toml",
+      "requirement": "0.4.46",
+      "locked": [
+        "0.4.46"
+      ],
+      "latest_stable": "0.4.46",
+      "current": true
+    },
+    {
+      "name": "tempfile",
+      "manifest": "Cargo.toml",
+      "requirement": "3.27.0",
+      "locked": [
+        "3.27.0"
+      ],
+      "latest_stable": "3.27.0",
+      "current": true
+    },
+    {
+      "name": "thiserror",
+      "manifest": "Cargo.toml",
+      "requirement": "2.0.21",
+      "locked": [
+        "2.0.21"
+      ],
+      "latest_stable": "2.0.21",
+      "current": true
+    },
+    {
+      "name": "toml",
+      "manifest": "Cargo.toml",
+      "requirement": "1.2.0",
+      "locked": [
+        "1.2.0+spec-1.1.0"
+      ],
+      "latest_stable": "1.2.0+spec-1.1.0",
+      "current": true
+    },
+    {
+      "name": "tracing",
+      "manifest": "Cargo.toml",
+      "requirement": "0.1.44",
+      "locked": [
+        "0.1.44"
+      ],
+      "latest_stable": "0.1.44",
+      "current": true
+    },
+    {
+      "name": "tracing-appender",
+      "manifest": "Cargo.toml",
+      "requirement": "0.2.5",
+      "locked": [
+        "0.2.5"
+      ],
+      "latest_stable": "0.2.5",
+      "current": true
+    },
+    {
+      "name": "tracing-subscriber",
+      "manifest": "Cargo.toml",
+      "requirement": "0.3.23",
+      "locked": [
+        "0.3.23"
+      ],
+      "latest_stable": "0.3.23",
+      "current": true
+    },
+    {
+      "name": "url",
+      "manifest": "Cargo.toml",
+      "requirement": "2.5.8",
+      "locked": [
+        "2.5.8"
+      ],
+      "latest_stable": "2.5.8",
+      "current": true
+    },
+    {
+      "name": "uuid",
+      "manifest": "Cargo.toml",
+      "requirement": "1.29.0",
+      "locked": [
+        "1.29.0"
+      ],
+      "latest_stable": "1.29.0",
+      "current": true
+    },
+    {
+      "name": "walkdir",
+      "manifest": "Cargo.toml",
+      "requirement": "2.5.0",
+      "locked": [
+        "2.5.0"
+      ],
+      "latest_stable": "2.5.0",
+      "current": true
+    },
+    {
+      "name": "anyhow",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.0.104",
+      "locked": [
+        "1.0.104"
+      ],
+      "latest_stable": "1.0.104",
+      "current": true
+    },
+    {
+      "name": "aws-config",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.13.0",
+      "locked": [
+        "1.13.0"
+      ],
+      "latest_stable": "1.13.0",
+      "current": true
+    },
+    {
+      "name": "aws-sdk-s3",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.157.0",
+      "locked": [
+        "1.157.0"
+      ],
+      "latest_stable": "1.157.0",
+      "current": true
+    },
+    {
+      "name": "bytes",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.12.1",
+      "locked": [
+        "1.12.1"
+      ],
+      "latest_stable": "1.12.1",
+      "current": true
+    },
+    {
+      "name": "clap",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "4.6.7",
+      "locked": [
+        "4.6.7"
+      ],
+      "latest_stable": "4.6.7",
+      "current": true
+    },
+    {
+      "name": "crossbeam-channel",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "0.5.17",
+      "locked": [
+        "0.5.17"
+      ],
+      "latest_stable": "0.5.17",
+      "current": true
+    },
+    {
+      "name": "flate2",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.1.10",
+      "locked": [
+        "1.1.10"
+      ],
+      "latest_stable": "1.1.10",
+      "current": true
+    },
+    {
+      "name": "gzp",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "2.0.4",
+      "locked": [
+        "2.0.4"
+      ],
+      "latest_stable": "2.0.4",
+      "current": true
+    },
+    {
+      "name": "indexmap",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "2.14.2",
+      "locked": [
+        "2.14.2"
+      ],
+      "latest_stable": "2.14.2",
+      "current": true
+    },
+    {
+      "name": "js-sys",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "0.3.107",
+      "locked": [
+        "0.3.107"
+      ],
+      "latest_stable": "0.3.107",
+      "current": true
+    },
+    {
+      "name": "libdeflater",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.26.1",
+      "locked": [
+        "1.26.1"
+      ],
+      "latest_stable": "1.26.1",
+      "current": true
+    },
+    {
+      "name": "memchr",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "2.8.3",
+      "locked": [
+        "2.8.3"
+      ],
+      "latest_stable": "2.8.3",
+      "current": true
+    },
+    {
+      "name": "num_cpus",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.17.0",
+      "locked": [
+        "1.17.0"
+      ],
+      "latest_stable": "1.17.0",
+      "current": true
+    },
+    {
+      "name": "once_cell",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.21.4",
+      "locked": [
+        "1.21.4"
+      ],
+      "latest_stable": "1.21.4",
+      "current": true
+    },
+    {
+      "name": "rayon",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.12.0",
+      "locked": [
+        "1.12.0"
+      ],
+      "latest_stable": "1.12.0",
+      "current": true
+    },
+    {
+      "name": "rustc-hash",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "2.1.3",
+      "locked": [
+        "2.1.3"
+      ],
+      "latest_stable": "2.1.3",
+      "current": true
+    },
+    {
+      "name": "serde",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.0.229",
+      "locked": [
+        "1.0.229"
+      ],
+      "latest_stable": "1.0.229",
+      "current": true
+    },
+    {
+      "name": "serde_json",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.0.154",
+      "locked": [
+        "1.0.154"
+      ],
+      "latest_stable": "1.0.154",
+      "current": true
+    },
+    {
+      "name": "tokio",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "1.54.1",
+      "locked": [
+        "1.54.1"
+      ],
+      "latest_stable": "1.54.1",
+      "current": true
+    },
+    {
+      "name": "ureq",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "3.5.1",
+      "locked": [
+        "3.5.1"
+      ],
+      "latest_stable": "3.5.1",
+      "current": true
+    },
+    {
+      "name": "wasm-bindgen",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "0.2.130",
+      "locked": [
+        "0.2.130"
+      ],
+      "latest_stable": "0.2.130",
+      "current": true
+    },
+    {
+      "name": "zstd",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "0.14.3",
+      "locked": [
+        "0.14.3"
+      ],
+      "latest_stable": "0.14.3",
+      "current": true
+    },
+    {
+      "name": "assert_cmd",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "2.2.2",
+      "locked": [
+        "2.2.2"
+      ],
+      "latest_stable": "2.2.2",
+      "current": true
+    },
+    {
+      "name": "criterion",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "0.8.2",
+      "locked": [
+        "0.8.2"
+      ],
+      "latest_stable": "0.8.2",
+      "current": true
+    },
+    {
+      "name": "predicates",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "3.1.4",
+      "locked": [
+        "3.1.4"
+      ],
+      "latest_stable": "3.1.4",
+      "current": true
+    },
+    {
+      "name": "rand",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "0.10.3",
+      "locked": [
+        "0.10.3"
+      ],
+      "latest_stable": "0.10.3",
+      "current": true
+    },
+    {
+      "name": "tempfile",
+      "manifest": "vendor/fasterp/Cargo.toml",
+      "requirement": "3.27.0",
+      "locked": [
+        "3.27.0"
+      ],
+      "latest_stable": "3.27.0",
+      "current": true
+    }
+  ],
+  "git_dependencies": [
+    {
+      "name": "mincorr",
+      "manifest": "Cargo.toml",
+      "git": "https://github.com/deminden/min-rust-corr",
+      "rev": "83d9ee4c5a099e24c3e0e4a3461ea893b72017d4",
+      "release_source": "https://api.github.com/repos/deminden/min-rust-corr/releases",
+      "published_stable_releases": [],
+      "status": "documented_exception",
+      "reason": "No published stable release. Retain the exact Git revision with Kendall tie-handling fixes absent from the older v0.2.2-gpl tag."
+    }
+  ],
+  "passed": true
+}

@@ -1,13 +1,14 @@
 use super::{
-    NativeProcessOptions, batches,
+    batches,
     window::{BatchWindow, PanicGuard, ScopeGuard},
+    NativeProcessOptions,
 };
 use crate::{
     pipeline::{self, Batch, PairedBatch, PairedWorkerResult, WorkerResult},
     split::SplitConfig,
     trimming::TrimmingConfig,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use crossbeam_channel::bounded;
 use std::{
     sync::Arc,

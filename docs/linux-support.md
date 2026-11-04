@@ -52,8 +52,8 @@ does not describe the workload's assigned capacity.
 ## Archive and CI gates
 
 ```bash
-python3 scripts/package_candidate.py --label 0.3.0 --allow-dirty
-python3 scripts/verify_candidate.py target/release-candidates/0.3.0 --report target/release-evidence/linux-install.json
+python3 scripts/package_candidate.py --label 0.3.1 --allow-dirty
+python3 scripts/verify_candidate.py target/release-candidates/0.3.1 --report target/release-evidence/linux-install.json
 ```
 
 The verifier checks archive checksums, exact file inventories, source/executable

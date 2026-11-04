@@ -1,5 +1,5 @@
 //! A permit follows each batch into its ordered result, covering every queue.
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use std::sync::{Arc, Condvar, Mutex};
 
 #[derive(Default)]

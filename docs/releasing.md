@@ -1,6 +1,6 @@
 # Preparing an RNAA release
 
-The current workspace is 0.3.0. No 0.3.0 tag or release has been published.
+The current workspace is 0.3.1, an unreleased update after the published 0.3.0 release.
 Release readiness and completion of the improvement roadmap are separate decisions.
 
 ## Versioning and distribution
@@ -36,13 +36,13 @@ Run from the workspace root:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-cargo test --manifest-path vendor/fasterp/Cargo.toml --lib --locked
+cargo test --manifest-path vendor/fasterp/Cargo.toml --lib --test compatibility_v140 --locked
 cargo build --release --all-features --locked -p rnaa
 python3 -m unittest discover -s scripts/tests
 python3 scripts/check_dependencies.py --write-report target/release-evidence/dependency-audit.json
 python3 examples/offline_reference.py --binary target/release/rnaa
-python3 scripts/package_candidate.py --label 0.3.0 --allow-dirty
-python3 scripts/verify_candidate.py target/release-candidates/0.3.0 --report target/release-evidence/candidate-install.json
+python3 scripts/package_candidate.py --label 0.3.1 --allow-dirty
+python3 scripts/verify_candidate.py target/release-candidates/0.3.1 --report target/release-evidence/candidate-install.json
 ```
 
 Python helpers require Python 3.11+. The packager records a dirty working tree and
@@ -104,12 +104,12 @@ is approved for release.
 | Gate | Current evidence / required action |
 | --- | --- |
 | Workspace correctness | The macOS and Ubuntu Linux ARM64 release-preparation sequences each passed 508 tests after the readiness-marker fix. Rerun the full sequence on the final clean release source. |
-| Scientific engine scope | Keep rsdeseq2 0.3.1 unchanged for this release, as requested; its replacement remains separate deferred work. |
+| Scientific engine scope | Validate `rsdeseq2 0.4.0` and the updated `fasterp` revision against the independent references and preprocessing regression tests; numerical and behavior changes require review. |
 | Distribution licensing | Review deferred by explicit user instruction. Dependency license declarations and bundled notices remain intact; no license is changed. This is outside the current technical release blockers. |
 | Platform / installation support | Run native Linux checks, optimized build and packaged-source installation; retain exact host/architecture/compiler evidence. Hosted x86-64/ARM64/macOS matrix must pass on the final commit before advertising those targets. |
 | Operational qualification | A four-run public yeast workflow passed on macOS and Linux ARM64; see `validation/real-data-smoke/2026-10-31-yeast-release.md`. On macOS, streamed adjustment reproduced the earlier candidate's adjusted matrix byte for byte; this is one small dataset. Broader scale, migration, interruption and combined-workflow qualification remain necessary for production claims. |
 | Product scope | Extraction remains incomplete; the roadmap also retains broader freshness coverage, analysis/publication admission, cross-project semantic reuse and remaining cleanup/cancellation work. |
-| Release identity | Version 0.3.0 is selected. Create a reviewed clean commit and push its matching version tag only when ready to publish. |
+| Release identity | Version 0.3.1 is selected. Create a reviewed clean commit and push its matching version tag only when ready to publish. |
 
 ## Upgrade and rollback
 
